@@ -17,25 +17,26 @@ export default function AppHeader() {
             </Link>
           </div>
 
-          {/* Center: Logo (home button) - LOCKED SIZE */}
-          <div className="justify-self-center">
-            <Link
-              href="/"
-              aria-label="Go home"
-              className="inline-flex items-center justify-center rounded-md hover:opacity-80 transition"
-            >
-              <div className="relative h-20 w-20 flex items-center justify-center">
-                <Image
-                  src="/logos/rw-logov2.png"
-                  alt="RatedWheels"
-                  fill
-                  priority
-                  sizes="80px"
-                  className="select-none object-contain"
-                />
-              </div>
-            </Link>
-          </div>
+          {/* Center: Logo (home button) */}
+<div className="justify-self-center">
+  <Link
+    href="/"
+    aria-label="Go home"
+    className="inline-flex items-center justify-center rounded-md hover:opacity-80 transition"
+  >
+    <div className="relative h-20 w-20">
+      <Image
+        src="/logos/rw-logov2.png"
+        alt="RatedWheels"
+        fill
+        priority
+        sizes="80px"
+        className="select-none object-contain scale-150"
+      />
+    </div>
+  </Link>
+</div>
+
 
           {/* Right: Directory link */}
           <div className="justify-self-end">
