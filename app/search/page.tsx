@@ -2,8 +2,17 @@ import SearchForm from './SearchForm'
 import ReviewForm from './ReviewForm'
 import CreateDriverForm from './CreateDriverForm'
 import { supabase } from '@/lib/supabaseClient'
-import Link from 'next/link'
-import Image from 'next/image'
+
+type DriverStat = {
+  driver_id: string
+  avg_stars: number | null
+  review_count: number | null
+}
+
+function formatAvg(avg: number | null | undefined) {
+  if (avg === null || avg === undefined || Number.isNaN(avg)) return '—'
+  return Number(avg).toFixed(1)
+}
 
 export default async function SearchPage({
   searchParams,
@@ -18,6 +27,10 @@ export default async function SearchPage({
 
   let driver: any = null
   let reviews: any[] = []
+
+  // NEW: avg rating + review count from driver_stats
+  let avgStars: number | null = null
+  let reviewCount = 0
 
   // Trait aggregation structures
   const traitCounts = { positive: 0, neutral: 0, negative: 0 }
@@ -44,6 +57,17 @@ export default async function SearchPage({
     driver = d
 
     if (driver?.id) {
+      // NEW: fetch stats for this driver (avg + count)
+      const { data: statRow, error: statsErr } = await supabase
+        .from('driver_stats')
+        .select('driver_id,avg_stars,review_count')
+        .eq('driver_id', driver.id)
+        .maybeSingle()
+
+      if (statsErr) console.log('statsErr', statsErr)
+      avgStars = (statRow as DriverStat | null)?.avg_stars ?? null
+      reviewCount = (statRow as DriverStat | null)?.review_count ?? 0
+
       const { data: r, error: reviewsErr } = await supabase
         .from('reviews')
         .select(
@@ -120,20 +144,14 @@ export default async function SearchPage({
 
   return (
     <main className="min-h-screen bg-[#ffeed5] text-black p-8">
-      {/* TOP BAR */}
+      {/* TOP BAR / HERO TEXT */}
       <div className="relative">
-        {/* Centered brand block */}
         <div className="flex flex-col items-center gap-4 mt-12 mb-20">
-          {/* IMPORTANT: z-10 + inline-block ensures nothing steals the click */}
-         
-
           <h1 className="text-4xl font-bold">Community-powered driver reviews</h1>
           <p className="text-sm text-gray-600">
             Built for rider safety, not harassment
           </p>
         </div>
-
-        
       </div>
 
       {/* HERO SEARCH */}
@@ -155,12 +173,28 @@ export default async function SearchPage({
         </div>
       ) : (
         <section className="mt-8 space-y-6">
-          {/* Driver card */}
+          {/* Driver card + Avg rating */}
           <div className="rounded-lg border border-gray-300 p-4">
-            <div className="text-xl font-semibold">{driver.display_name}</div>
-            <div className="text-gray-700">@{driver.driver_handle}</div>
-            <div className="text-gray-600">
-              {driver.city}, {driver.state}
+            <div className="flex items-start justify-between gap-6">
+              <div>
+                <div className="text-xl font-semibold">{driver.display_name}</div>
+                <div className="text-gray-700">@{driver.driver_handle}</div>
+                <div className="text-gray-600">
+                  {driver.city ?? '—'}
+                  {driver.state ? `, ${driver.state}` : ''}
+                </div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-sm text-gray-600">Avg rating</div>
+                <div className="text-2xl font-bold">
+                  {formatAvg(avgStars)}
+                  <span className="text-sm font-normal text-gray-600">/5</span>
+                </div>
+                <div className="text-xs text-gray-600">
+                  {reviewCount} review{reviewCount === 1 ? '' : 's'}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -169,11 +203,13 @@ export default async function SearchPage({
             <div className="text-lg font-semibold">Driver traits</div>
 
             <div className="mt-4 space-y-5">
-              {([
-                ['positive', 'Positive'] as const,
-                ['neutral', 'Neutral'] as const,
-                ['negative', 'Negative'] as const,
-              ]).map(([key, label]) => {
+              {(
+                [
+                  ['positive', 'Positive'] as const,
+                  ['neutral', 'Neutral'] as const,
+                  ['negative', 'Negative'] as const,
+                ] as const
+              ).map(([key, label]) => {
                 const val = (traitCounts as any)[key] as number
                 const pct = Math.round((val / maxTrait) * 100)
 
@@ -192,7 +228,6 @@ export default async function SearchPage({
                     </div>
 
                     <details className="text-sm">
-                      {/* fixed hover color for cream bg */}
                       <summary className="cursor-pointer text-gray-700 hover:text-gray-900">
                         Show tags
                       </summary>
