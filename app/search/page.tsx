@@ -125,24 +125,11 @@ export default async function SearchPage({
         {/* Centered brand block */}
         <div className="flex flex-col items-center gap-4 mt-12 mb-20">
           {/* IMPORTANT: z-10 + inline-block ensures nothing steals the click */}
-          <Link
-            href="/"
-            aria-label="Go home"
-            className="relative z-10 inline-block"
-          >
-            <Image
-              src="/logos/rw-logov2.png"
-              alt="Rated Wheels logo"
-              width={500}
-              height={500}
-              priority
-              className="cursor-pointer select-none pointer-events-auto"
-            />
-          </Link>
+         
 
-          <h1 className="text-4xl font-bold">Rated Wheels</h1>
+          <h1 className="text-4xl font-bold">Community-powered driver reviews</h1>
           <p className="text-sm text-gray-600">
-            Community-powered driver reviews
+            Built for rider safety, not harassment
           </p>
         </div>
 
