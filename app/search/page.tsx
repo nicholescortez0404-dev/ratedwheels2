@@ -133,13 +133,7 @@ export default async function SearchPage({
           </p>
         </div>
 
-        {/* Top-right link stays pinned */}
-        <Link
-          href="/drivers"
-          className="absolute right-0 top-0 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-900 hover:border-gray-600 transition"
-        >
-          Browse all drivers
-        </Link>
+        
       </div>
 
       {/* HERO SEARCH */}
