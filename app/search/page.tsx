@@ -96,7 +96,11 @@ export default async function SearchPage({
 
       // Convert frequency map into 3 sorted arrays (for dropdown lists)
       Object.values(tagFreq).forEach((t) => {
-        if (t.category === 'positive' || t.category === 'neutral' || t.category === 'negative') {
+        if (
+          t.category === 'positive' ||
+          t.category === 'neutral' ||
+          t.category === 'negative'
+        ) {
           tagsByCategory[t.category].push({ label: t.label, count: t.count })
         }
       })
@@ -118,18 +122,28 @@ export default async function SearchPage({
     <main className="min-h-screen bg-[#ffeed5] text-black p-8">
       {/* TOP BAR */}
       <div className="relative">
-        {/* Centered brand block (only this is moved down) */}
+        {/* Centered brand block */}
         <div className="flex flex-col items-center gap-4 mt-12 mb-20">
-          <Image
-            src="/logos/rw-logov2.png"
-            alt="Rated Wheels logo"
-            width={500}
-            height={500}
-            priority
-          />
+          {/* IMPORTANT: z-10 + inline-block ensures nothing steals the click */}
+          <Link
+            href="/"
+            aria-label="Go home"
+            className="relative z-10 inline-block"
+          >
+            <Image
+              src="/logos/rw-logov2.png"
+              alt="Rated Wheels logo"
+              width={500}
+              height={500}
+              priority
+              className="cursor-pointer select-none pointer-events-auto"
+            />
+          </Link>
 
           <h1 className="text-4xl font-bold">Rated Wheels</h1>
-          <p className="text-sm text-gray-600">Community-powered driver reviews</p>
+          <p className="text-sm text-gray-600">
+            Community-powered driver reviews
+          </p>
         </div>
 
         {/* Top-right link stays pinned */}
@@ -141,7 +155,7 @@ export default async function SearchPage({
         </Link>
       </div>
 
-      {/* HERO SEARCH (no weird mt-65; keep normal spacing) */}
+      {/* HERO SEARCH */}
       <div className="flex flex-col items-center">
         <SearchForm initialQuery={raw.replace(/-/g, ' ')} />
 
@@ -197,7 +211,8 @@ export default async function SearchPage({
                     </div>
 
                     <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-700 hover:text-gray-200">
+                      {/* fixed hover color for cream bg */}
+                      <summary className="cursor-pointer text-gray-700 hover:text-gray-900">
                         Show tags
                       </summary>
 
