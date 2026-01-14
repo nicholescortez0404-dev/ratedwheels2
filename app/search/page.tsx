@@ -220,12 +220,20 @@ export default async function SearchPage({
                       <span className="text-gray-700">{val}</span>
                     </div>
 
-                    <div className="h-2 w-full rounded bg-gray-800">
-                      <div
-                        className="h-2 rounded bg-green-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+                    <div className="h-2 w-full rounded bg-gray-300">
+  <div
+    className={[
+      'h-2 rounded',
+      key === 'positive'
+        ? 'bg-green-500'
+        : key === 'neutral'
+        ? 'bg-yellow-500'
+        : 'bg-red-500',
+    ].join(' ')}
+    style={{ width: `${pct}%` }}
+  />
+</div>
+
 
                     <details className="text-sm">
                       <summary className="cursor-pointer text-gray-700 hover:text-gray-900">
