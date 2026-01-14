@@ -68,7 +68,8 @@ export default async function DriversPage() {
 
           <Link
             href="/search"
-            className="rounded-md bg-green-500 px-4 py-2 font-semibold text-black"
+            className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
+
           >
             Search
           </Link>
@@ -85,10 +86,10 @@ export default async function DriversPage() {
 
               return (
                 <Link
-                  key={d.id}
-                  href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
-                  className="rounded-lg border border-gray-900 p-4 hover:border-gray-300 transition"
-                >
+                key={d.id}
+                href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
+                className="rounded-2xl border border-gray-300 bg-transparent p-5 hover:border-gray-600 transition"
+>
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-xl font-semibold">{d.display_name}</div>

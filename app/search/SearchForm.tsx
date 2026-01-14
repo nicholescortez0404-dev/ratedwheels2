@@ -14,13 +14,14 @@ export default function SearchForm({ initialQuery = '' }: { initialQuery?: strin
   name="q"
   value={value}
   onChange={(e) => setValue(e.target.value)}
-  placeholder="For ex: Last 4 of license plate + first name"
+  placeholder="Last 4 of license plate + First name (ex: 8841-john)"
+
   className="w-full rounded-md border border-gray-1000 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
 />
 
   <button
     type="submit"
-    className="rounded-md bg-green-500 px-8 py-3 font-semibold text-black"
+    className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
   >
     Search
   </button>

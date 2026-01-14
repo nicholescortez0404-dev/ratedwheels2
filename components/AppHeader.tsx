@@ -5,7 +5,7 @@ import Container from "@/components/Container"
 export default function AppHeader() {
   return (
     <header className="sticky top-0 z-50 bg-[#ffeed5] text-black border-b border-gray-200">
-      <Container className="py-3">
+      <Container className="py-4">
         <div className="grid grid-cols-3 items-center">
           {/* Left: Brand text */}
           <div className="justify-self-start">
@@ -28,9 +28,9 @@ export default function AppHeader() {
               <Image
                 src="/logos/rw-logov2.png"
                 alt="RatedWheels"
-                width={40}
-                height={40}
-                className="h-10 w-10 select-none"
+                width={50}
+                height={50}
+                className="h-11 w-11 select-none"
                 priority
               />
             </Link>

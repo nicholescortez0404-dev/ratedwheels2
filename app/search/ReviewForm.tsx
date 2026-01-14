@@ -179,7 +179,8 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-green-500 px-4 py-2 font-semibold text-black disabled:opacity-60"
+        className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
+
       >
         {loading ? 'Posting…' : 'Post review'}
       </button>
