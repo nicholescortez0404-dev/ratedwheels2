@@ -30,7 +30,7 @@ export default function AppHeader() {
                 alt="RatedWheels"
                 width={50}
                 height={50}
-                className="h-11 w-11 select-none"
+                className="h-20 w-20 select-none"
                 priority
               />
             </Link>
