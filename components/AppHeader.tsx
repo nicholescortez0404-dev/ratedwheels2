@@ -28,9 +28,9 @@ export default function AppHeader() {
               <Image
                 src="/logos/rw-logov2.png"
                 alt="RatedWheels"
-                width={50}
-                height={50}
-                className="h-20 w-20 select-none"
+                width={90}
+                height={70}
+                className="h-14 w-14 select-none"
                 priority
               />
             </Link>
