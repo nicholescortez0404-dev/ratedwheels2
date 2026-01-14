@@ -1,45 +1,47 @@
-// TEST: pushing update
-
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
+import SearchForm from './search/SearchForm'
 
 export default function Home() {
-  const router = useRouter()
-  const [query, setQuery] = useState('')
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const q = query.trim()
-    if (!q) return
-    router.push(`/search?q=${encodeURIComponent(q)}`)
-  }
-
   return (
-    <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-      <h1 className="text-5xl font-bold mb-4">RatedWheels</h1>
-      <p className="text-gray-700 mb-8">Search any driver by handle</p>
+    <main className="min-h-screen bg-[#ffeed5] text-black p-8">
+      {/* TOP BAR */}
+      <div className="relative">
+        {/* Centered brand block */}
+        <div className="flex flex-col items-center gap-4 mt-12 mb-20">
+          <Image
+            src="/logos/rw-logov2.png"
+            alt="Rated Wheels logo"
+            width={500}
+            height={500}
+            priority
+          />
 
-      <form onSubmit={onSubmit} className="flex flex-col items-center gap-4">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Last 4 of license plate + First name (ex: 8841-mike)"
-          className="px-4 py-3 rounded bg-gray-900 border border-gray-300 w-100"
-        />
+          <h1 className="text-4xl font-bold">Rated Wheels</h1>
+          <p className="text-sm text-gray-600">
+            Community-powered driver reviews
+          </p>
+        </div>
 
-        <button
-          type="submit"
-          className="mt-4 px-6 py-3 bg-green-500 text-black rounded"
+        {/* Top-right link */}
+        <Link
+          href="/drivers"
+          className="absolute right-0 top-0 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-900 hover:border-gray-600 transition"
         >
-          Search
-        </button>
-      </form>
+          Browse all drivers
+        </Link>
+      </div>
 
-      <p className="mt-6 text-xs text-gray-600">
-        Built for rider safety, not harassment
-      </p>
+      {/* SEARCH (shared component) */}
+      <div className="flex flex-col items-center">
+        <SearchForm />
+
+        <p className="mt-6 text-xs text-gray-600">
+          Built for rider safety, not harassment
+        </p>
+      </div>
     </main>
   )
 }
