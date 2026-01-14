@@ -24,7 +24,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Load tag options
+  // Load tag options (safe to keep client-side)
   useEffect(() => {
     let mounted = true
     ;(async () => {
@@ -102,48 +102,38 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     setLoading(true)
     setError(null)
 
-    const trimmed = comment.trim()
-
-    // 1) Insert review, return new review id
-    const { data: created, error: reviewErr } = await supabase
-      .from('reviews')
-      .insert({
-        driver_id: driverId,
-        stars,
-        comment: trimmed,
-      })
-      .select('id')
-      .single()
-
-    if (reviewErr) {
-      setLoading(false)
-      setError(reviewErr.message)
-      return
-    }
-
-    // 2) Insert selected tags into review_tags
     const tagIds = Array.from(selectedTagIds)
-    if (tagIds.length > 0) {
-      const { error: tagErr } = await supabase.from('review_tags').insert(
-        tagIds.map((tagId) => ({
-          review_id: created.id,
-          tag_id: tagId,
-        }))
-      )
 
-      if (tagErr) {
+    try {
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId,
+          stars,
+          comment,
+          tagIds,
+        }),
+      })
+
+      const json = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
         setLoading(false)
-        setError(tagErr.message)
+        setError(json?.error || 'Failed to post review.')
         return
       }
-    }
 
-    // Reset + refresh
-    setComment('')
-    setStars(5)
-    setSelectedTagIds(new Set())
-    setLoading(false)
-    router.refresh()
+      // Reset + refresh
+      setComment('')
+      setStars(5)
+      setSelectedTagIds(new Set())
+      setLoading(false)
+      router.refresh()
+    } catch (err: any) {
+      setLoading(false)
+      setError(err?.message || 'Failed to post review.')
+    }
   }
 
   const TagGroup = ({ title, list }: { title: string; list: TagRow[] }) => {
@@ -204,7 +194,12 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         placeholder="Write what happened…"
         className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-black/20"
         rows={3}
+        
       />
+      <p className="text-xs text-gray-600">
+  Note: some language may be automatically censored. Hate speech/slurs are not allowed.
+</p>
+
 
       {error && <p className="text-red-600">{error}</p>}
 
