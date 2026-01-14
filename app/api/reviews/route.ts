@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// bad-words export can be funky in TS, so use require for compatibility
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const Filter = require('bad-words')
+const BadWords = require('bad-words')
+const Filter = BadWords?.default ?? BadWords
 
 export const runtime = 'nodejs'
+
 
 // Server-only Supabase client (uses service role)
 const supabaseAdmin = createClient(
