@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
+import Container from "@/components/Container"
+
 
 type Driver = {
   id: string
@@ -55,20 +57,6 @@ export default async function DriversPage() {
 
   return (
     <main className="min-h-screen bg-[#ffeed5] text-black p-8">
-      {/* HOME LOGO BUTTON */}
-<Link
-  href="/"
-  aria-label="Go home"
-  className="absolute left-4 top-4 md:left-6 md:top-6 z-10 inline-block hover:opacity-80 transition"
->
-  <img
-    src="/logos/rw-logov2.png"
-    alt="Rated Wheels logo"
-    className="h-10 md:h-12 w-auto cursor-pointer"
-  />
-</Link>
-
-
       <div className="mx-auto max-w-5xl">
         <div className="flex items-end justify-between gap-4">
           <div>
