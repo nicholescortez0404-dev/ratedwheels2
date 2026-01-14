@@ -9,7 +9,10 @@ export default function AppHeader() {
         <div className="grid h-full grid-cols-3 items-center">
           {/* Left: Brand text */}
           <div className="justify-self-start">
-            <Link href="/" className="text-lg font-bold tracking-tight hover:opacity-80 transition">
+            <Link
+              href="/"
+              className="text-lg font-bold tracking-tight text-black hover:opacity-80 transition"
+            >
               RatedWheels
             </Link>
           </div>
@@ -21,14 +24,14 @@ export default function AppHeader() {
               aria-label="Go home"
               className="inline-flex items-center justify-center rounded-md hover:opacity-80 transition"
             >
-              <div className="h-20 w-20 flex items-center justify-center">
+              <div className="relative h-20 w-20 flex items-center justify-center">
                 <Image
                   src="/logos/rw-logov2.png"
                   alt="RatedWheels"
-                  width={96}
-                  height={96}
+                  fill
                   priority
-                  className="select-none"
+                  sizes="80px"
+                  className="select-none object-contain"
                 />
               </div>
             </Link>
