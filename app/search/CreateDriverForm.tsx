@@ -8,8 +8,14 @@ function normalizeHandle(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, '-')
 }
 
+type InsertedDriver = {
+  id: string
+  driver_handle: string
+}
+
 export default function CreateDriverForm({ initialRaw }: { initialRaw: string }) {
   const router = useRouter()
+
   const [displayName, setDisplayName] = useState(initialRaw.trim())
   const [city, setCity] = useState('')
   const [state, setState] = useState('')
@@ -23,7 +29,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setLoading(true)
     setError(null)
 
-    const { data: inserted, error } = await supabase
+    // 1) Insert and force Supabase to return the inserted row by chaining .select()
+    const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
       .insert({
         driver_handle: handle,
@@ -34,16 +41,20 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       .select('id, driver_handle')
       .single()
 
-    console.log('INSERT RESULT:', inserted, 'ERROR:', error)
+    console.log('INSERT RESULT:', inserted, 'ERROR:', insertErr)
 
     setLoading(false)
 
-    if (error) {
-      setError(error.message)
+    if (insertErr) {
+      setError(insertErr.message)
       return
     }
 
-    router.push(`/search?q=${encodeURIComponent(handle)}`)
+    // 2) Navigate to the driver page
+    const row = inserted as InsertedDriver | null
+    const nextHandle = row?.driver_handle ?? handle
+
+    router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
     router.refresh()
   }
 
