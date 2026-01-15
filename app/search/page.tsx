@@ -1,6 +1,7 @@
 import SearchForm from './SearchForm'
 import ReviewForm from './ReviewForm'
 import CreateDriverForm from './CreateDriverForm'
+import SortSelect from './SortSelect'
 import { supabase } from '@/lib/supabaseClient'
 
 type DriverStat = {
@@ -14,23 +15,20 @@ function formatAvg(avg: number | null | undefined) {
   return Number(avg).toFixed(1)
 }
 
-function sortLink(q: string, sort: string) {
-  return `/search?q=${encodeURIComponent(q)}&sort=${encodeURIComponent(sort)}`
-}
-
 export default async function SearchPage({
   searchParams,
 }: {
   searchParams: Promise<{ q?: string; sort?: string }>
 }) {
   const sp = await searchParams
+
   const raw = (sp.q ?? '').trim()
+  const q = raw.toLowerCase().replace(/\s+/g, '-') // "8841 mike" -> "8841-mike"
 
-  // normalize: "8841 mike" → "8841-mike"
-  const q = raw.toLowerCase().replace(/\s+/g, '-')
-
-  const sort = (sp.sort ?? 'newest').toLowerCase()
-  const sortMode = sort === 'highest' ? 'highest' : 'newest'
+  // sorting
+  const allowedSorts = new Set(['newest', 'oldest', 'highest', 'lowest'])
+  const sortParam = String(sp.sort ?? 'newest').toLowerCase()
+  const sortMode = allowedSorts.has(sortParam) ? sortParam : 'newest'
 
   let driver: any = null
   let reviews: any[] = []
@@ -38,14 +36,13 @@ export default async function SearchPage({
   let avgStars: number | null = null
   let reviewCount = 0
 
-  // Trait aggregation structures
+  // Trait aggregation
   const traitCounts = { positive: 0, neutral: 0, negative: 0 }
   const tagFreq: Record<
     string,
     { id: string; label: string; category: string; slug: string; count: number }
   > = {}
 
-  // Derived lists for dropdowns
   const tagsByCategory = {
     positive: [] as { label: string; count: number }[],
     neutral: [] as { label: string; count: number }[],
@@ -63,7 +60,7 @@ export default async function SearchPage({
     driver = d
 
     if (driver?.id) {
-      // fetch stats (avg + count)
+      // stats
       const { data: statRow, error: statsErr } = await supabase
         .from('driver_stats')
         .select('driver_id,avg_stars,review_count')
@@ -74,41 +71,45 @@ export default async function SearchPage({
       avgStars = (statRow as DriverStat | null)?.avg_stars ?? null
       reviewCount = (statRow as DriverStat | null)?.review_count ?? 0
 
-      // reviews query (sorted)
+      // reviews (sorted)
       let rq = supabase
         .from('reviews')
         .select(
           `
-            id,
-            driver_id,
-            reviewer_id,
-            stars,
-            comment,
-            created_at,
-            review_tags (
-              tag:tags (
-                id,
-                label,
-                category,
-                slug
-              )
+          id,
+          driver_id,
+          reviewer_id,
+          stars,
+          comment,
+          created_at,
+          review_tags (
+            tag:tags (
+              id,
+              label,
+              category,
+              slug
             )
-          `
+          )
+        `
         )
         .eq('driver_id', driver.id)
 
       if (sortMode === 'highest') {
         rq = rq.order('stars', { ascending: false }).order('created_at', { ascending: false })
+      } else if (sortMode === 'lowest') {
+        rq = rq.order('stars', { ascending: true }).order('created_at', { ascending: false })
+      } else if (sortMode === 'oldest') {
+        rq = rq.order('created_at', { ascending: true })
       } else {
+        // newest
         rq = rq.order('created_at', { ascending: false })
       }
 
       const { data: r, error: reviewsErr } = await rq
-
       if (reviewsErr) console.log('reviewsErr', reviewsErr)
       reviews = r ?? []
 
-      // Aggregate trait totals + tag frequencies
+      // Aggregate traits + tag frequency
       for (const rev of reviews as any[]) {
         for (const rt of rev.review_tags ?? []) {
           const tag = rt?.tag
@@ -132,7 +133,6 @@ export default async function SearchPage({
         }
       }
 
-      // Convert frequency map into 3 sorted arrays (for dropdown lists)
       Object.values(tagFreq).forEach((t) => {
         if (t.category === 'positive' || t.category === 'neutral' || t.category === 'negative') {
           tagsByCategory[t.category].push({ label: t.label, count: t.count })
@@ -173,7 +173,7 @@ export default async function SearchPage({
         </div>
       ) : (
         <section className="mt-8 space-y-6">
-          {/* Driver card + Avg rating */}
+          {/* Driver card */}
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="flex items-start justify-between gap-6">
               <div>
@@ -198,7 +198,7 @@ export default async function SearchPage({
             </div>
           </div>
 
-          {/* Driver traits */}
+          {/* Traits */}
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="text-lg font-semibold">Driver traits</div>
 
@@ -264,36 +264,11 @@ export default async function SearchPage({
             <ReviewForm driverId={driver.id} />
           </div>
 
-          {/* Reviews list */}
+          {/* Reviews */}
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-lg font-semibold">Reviews</h2>
-
-              {/* Sort buttons (server-safe, no client JS needed) */}
-              <div className="flex items-center gap-2 text-sm">
-                <a
-                  href={sortLink(q, 'newest')}
-                  className={[
-                    'rounded-full border px-3 py-1 transition',
-                    sortMode === 'newest'
-                      ? 'border-gray-900 bg-gray-900 text-white'
-                      : 'border-gray-300 bg-transparent text-gray-900 hover:border-gray-700',
-                  ].join(' ')}
-                >
-                  Newest
-                </a>
-                <a
-                  href={sortLink(q, 'highest')}
-                  className={[
-                    'rounded-full border px-3 py-1 transition',
-                    sortMode === 'highest'
-                      ? 'border-gray-900 bg-gray-900 text-white'
-                      : 'border-gray-300 bg-transparent text-gray-900 hover:border-gray-700',
-                  ].join(' ')}
-                >
-                  Highest rated
-                </a>
-              </div>
+              <SortSelect />
             </div>
 
             {reviews.length === 0 ? (
@@ -312,9 +287,7 @@ export default async function SearchPage({
                       className="rounded-2xl border border-gray-300 bg-transparent p-5"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <div className="text-sm font-semibold">
-                          Rating: {r.stars}/5
-                        </div>
+                        <div className="text-sm font-semibold">Rating: {r.stars}/5</div>
                         <div className="text-xs text-gray-600">
                           {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
                         </div>
