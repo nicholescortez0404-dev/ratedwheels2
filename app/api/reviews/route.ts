@@ -1,40 +1,17 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const BadWords = require('bad-words')
-const Filter = BadWords?.default ?? BadWords
-
 export const runtime = 'nodejs'
 
-
-// Server-only Supabase client (uses service role)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-// Profanity censor list (extra words you want censored)
-const PROFANITY_LIST = (process.env.PROFANITY_CENSOR_LIST || '')
-  .split(',')
-  .map((w) => w.trim().toLowerCase())
-  .filter(Boolean)
-
-// Slur blocklist (hard stop — review rejected)
-// Leave empty until YOU provide entries (don’t put placeholders like "slur1")
-const SLUR_BLOCKLIST = (process.env.SLUR_BLOCKLIST || '')
-  .split(',')
-  .map((w) => w.trim().toLowerCase())
-  .filter(Boolean)
-
-// Profanity filter instance (bad-words includes its own default list)
-// We add your custom ones on top.
-const profanityFilter = new Filter()
-if (PROFANITY_LIST.length > 0) {
-  profanityFilter.addWords(...PROFANITY_LIST)
+type ReviewBody = {
+  driverId?: string
+  stars?: number
+  comment?: string
+  tagIds?: unknown
 }
 
-// Normalize text to catch sneaky variations
+/* ----------------------- helpers ----------------------- */
+
 function normalize(text: string) {
   return text
     .toLowerCase()
@@ -44,21 +21,64 @@ function normalize(text: string) {
     .trim()
 }
 
-function containsBlockedSlur(text: string) {
-  if (SLUR_BLOCKLIST.length === 0) return false
-  const normalized = normalize(text)
-  return SLUR_BLOCKLIST.some((slur) => normalized.includes(slur))
+function getEnvList(name: string): string[] {
+  const raw = process.env[name]
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((w) => w.trim().toLowerCase())
+    .filter((w) => w.length > 0)
 }
+
+function containsBlockedSlur(text: string, slurBlocklist: string[]) {
+  if (slurBlocklist.length === 0) return false
+  const normalized = normalize(text)
+  return slurBlocklist.some((slur) => normalized.includes(slur))
+}
+
+function getSupabaseAdmin() {
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url) throw new Error('Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)')
+  if (!serviceKey) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY')
+
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false },
+  })
+}
+
+async function getProfanityFilter() {
+  // "bad-words" has awkward typing in some setups, so we treat it as "any"
+  const mod: any = await import('bad-words')
+  const Filter: any = mod?.default ?? mod
+
+  const profanityFilter = new Filter()
+
+  const profanityList = getEnvList('PROFANITY_CENSOR_LIST')
+  if (profanityList.length > 0) {
+    profanityFilter.addWords(...profanityList)
+  }
+
+  return profanityFilter as {
+    clean: (input: string) => string
+  }
+}
+
+/* ----------------------- POST ----------------------- */
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json()
+    const body = (await req.json()) as ReviewBody
 
-    // match what your client sends
-    const driverId = body?.driverId
-    const stars = Number(body?.stars)
-    const comment = String(body?.comment || '')
-    const tagIds = Array.isArray(body?.tagIds) ? body.tagIds : []
+    const driverId = body.driverId
+    const stars = Number(body.stars)
+    const comment = String(body.comment ?? '')
+
+    const tagIdsRaw = body.tagIds
+    const tagIds: string[] = Array.isArray(tagIdsRaw)
+      ? tagIdsRaw.map((x) => String(x)).filter((x) => x.length > 0)
+      : []
 
     if (!driverId || !Number.isFinite(stars)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -68,13 +88,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Stars must be between 1 and 5' }, { status: 400 })
     }
 
-    // 🚫 Hard block: slurs (only works if SLUR_BLOCKLIST has real entries)
-    if (containsBlockedSlur(comment)) {
-      return NextResponse.json({ error: 'Review contains prohibited language.' }, { status: 400 })
+    // 🚫 Hard block list
+    const slurBlocklist = getEnvList('SLUR_BLOCKLIST')
+    if (containsBlockedSlur(comment, slurBlocklist)) {
+      return NextResponse.json(
+        { error: 'Review contains prohibited language.' },
+        { status: 400 }
+      )
     }
 
-    // ✳️ Soft censor: profanity
-    const censoredComment = profanityFilter.clean(comment)
+    // ✳️ Soft censor
+    const profanityFilter = await getProfanityFilter()
+    const censoredComment = profanityFilter.clean(comment).trim()
+
+    const supabaseAdmin = getSupabaseAdmin()
 
     // 1) Insert review
     const { data: created, error: reviewErr } = await supabaseAdmin
@@ -82,7 +109,7 @@ export async function POST(req: Request) {
       .insert({
         driver_id: driverId,
         stars,
-        comment: censoredComment.trim(),
+        comment: censoredComment,
       })
       .select('id')
       .single()
@@ -92,21 +119,15 @@ export async function POST(req: Request) {
     }
 
     // 2) Insert tags
-    const cleanTagIds = tagIds
-      .map((x: any) => String(x))
-      .filter(Boolean)
-
-    if (cleanTagIds.length > 0) {
+    if (tagIds.length > 0) {
       const { error: tagErr } = await supabaseAdmin.from('review_tags').insert(
-        cleanTagIds.map((tagId: string) => ({
+        tagIds.map((tagId) => ({
           review_id: created.id,
           tag_id: tagId,
         }))
       )
 
       if (tagErr) {
-        // optional: roll back the review if tag insert fails
-        // await supabaseAdmin.from('reviews').delete().eq('id', created.id)
         return NextResponse.json({ error: tagErr.message }, { status: 500 })
       }
     }
@@ -114,9 +135,12 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       review_id: created.id,
-      censored_comment: censoredComment, // optional, can remove
+      censored_comment: censoredComment, // optional
     })
-  } catch {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message ?? 'Invalid request' },
+      { status: 400 }
+    )
   }
 }
