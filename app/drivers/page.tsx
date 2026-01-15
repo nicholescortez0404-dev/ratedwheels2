@@ -1,7 +1,9 @@
+// app/drivers/page.tsx
+
+export const dynamic = 'force-dynamic'
+
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
-import Container from "@/components/Container"
-
 
 type Driver = {
   id: string
@@ -23,7 +25,7 @@ function formatAvg(avg: number | null | undefined) {
 }
 
 export default async function DriversPage() {
-  // 1) drivers list
+  // 1) Load drivers
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
     .select('id,display_name,driver_handle,city,state')
@@ -31,29 +33,58 @@ export default async function DriversPage() {
 
   if (driversErr) {
     return (
-      <main className="min-h-screen bg[-black] text-white p-8">
-        <p className="text-red-400">Error loading drivers: {driversErr.message}</p>
+      <main className="min-h-screen bg-black text-white p-8">
+        <div className="mx-auto max-w-5xl">
+          <h1 className="text-2xl font-bold">All drivers</h1>
+          <p className="mt-4 text-red-400">
+            Error loading drivers: {driversErr.message}
+          </p>
+          <Link
+            href="/"
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-lg border border-white/20 px-5 text-sm font-semibold hover:bg-white/10 transition"
+          >
+            Go home
+          </Link>
+        </div>
       </main>
     )
   }
 
   const drivers = (driversData ?? []) as Driver[]
 
-  // 2) stats list (from your view/table)
-  const { data: statsData, error: statsErr } = await supabase
-    .from('driver_stats')
-    .select('driver_id,avg_stars,review_count')
+  // 2) Load stats ONLY for these drivers (better than grabbing all stats)
+  let statsByDriver = new Map<string, DriverStat>()
 
-  if (statsErr) {
-    return (
-      <main className="min-h-screen bg-black text-white p-8">
-        <p className="text-red-400">Error loading driver stats: {statsErr.message}</p>
-      </main>
-    )
+  if (drivers.length > 0) {
+    const driverIds = drivers.map((d) => d.id)
+
+    const { data: statsData, error: statsErr } = await supabase
+      .from('driver_stats')
+      .select('driver_id,avg_stars,review_count')
+      .in('driver_id', driverIds)
+
+    if (statsErr) {
+      return (
+        <main className="min-h-screen bg-black text-white p-8">
+          <div className="mx-auto max-w-5xl">
+            <h1 className="text-2xl font-bold">All drivers</h1>
+            <p className="mt-4 text-red-400">
+              Error loading driver stats: {statsErr.message}
+            </p>
+            <Link
+              href="/"
+              className="mt-6 inline-flex h-11 items-center justify-center rounded-lg border border-white/20 px-5 text-sm font-semibold hover:bg-white/10 transition"
+            >
+              Go home
+            </Link>
+          </div>
+        </main>
+      )
+    }
+
+    const stats = (statsData ?? []) as DriverStat[]
+    statsByDriver = new Map(stats.map((s) => [s.driver_id, s]))
   }
-
-  const stats = (statsData ?? []) as DriverStat[]
-  const statsByDriver = new Map(stats.map((s) => [s.driver_id, s]))
 
   return (
     <main className="min-h-screen bg-[#ffeed5] text-black p-8">
@@ -61,7 +92,7 @@ export default async function DriversPage() {
         <div className="flex items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">All drivers</h1>
-            <p className="mt-1 text-black-400">
+            <p className="mt-1 text-gray-700">
               Browse profiles and jump into reviews/traits.
             </p>
           </div>
@@ -69,14 +100,13 @@ export default async function DriversPage() {
           <Link
             href="/search"
             className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
-
           >
             Search
           </Link>
         </div>
 
         {drivers.length === 0 ? (
-          <p className="mt-8 text-black-400">No drivers yet.</p>
+          <p className="mt-8 text-gray-700">No drivers yet.</p>
         ) : (
           <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2">
             {drivers.map((d) => {
@@ -86,27 +116,27 @@ export default async function DriversPage() {
 
               return (
                 <Link
-                key={d.id}
-                href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
-                className="rounded-2xl border border-gray-300 bg-transparent p-5 hover:border-gray-600 transition"
->
+                  key={d.id}
+                  href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
+                  className="rounded-2xl border border-gray-300 bg-transparent p-5 hover:border-gray-600 transition"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-xl font-semibold">{d.display_name}</div>
-                      <div className="text-black-400">@{d.driver_handle}</div>
-                      <div className="text-black-500">
+                      <div className="text-gray-700">@{d.driver_handle}</div>
+                      <div className="text-gray-600">
                         {d.city ? d.city : '—'}
                         {d.state ? `, ${d.state}` : ''}
                       </div>
                     </div>
 
                     <div className="text-right">
-                      <div className="text-sm text-black-400">Avg rating</div>
+                      <div className="text-sm text-gray-700">Avg rating</div>
                       <div className="text-2xl font-bold">
                         {formatAvg(avg)}
-                        <span className="text-sm font-normal text-black-400">/5</span>
+                        <span className="text-sm font-normal text-gray-700">/5</span>
                       </div>
-                      <div className="text-xs text-black-500">
+                      <div className="text-xs text-gray-600">
                         {count} review{count === 1 ? '' : 's'}
                       </div>
                     </div>
