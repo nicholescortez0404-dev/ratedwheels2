@@ -23,12 +23,13 @@
     }
   },
   "include": [
+    "types/**/*.d.ts",
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "app/search/SearchForm"  ],
   "exclude": ["node_modules"]
 }
