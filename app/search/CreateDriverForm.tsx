@@ -23,12 +23,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setLoading(true)
     setError(null)
 
-    const { error } = await supabase.from('drivers').insert({
-      driver_handle: handle,
-      display_name: displayName.trim() || handle,
-      city: city.trim() || null,
-      state: state.trim() || null,
-    })
+    const { data: inserted, error } = await supabase
+      .from('drivers')
+      .insert({
+        driver_handle: handle,
+        display_name: displayName.trim() || handle,
+        city: city.trim() || null,
+        state: state.trim() || null,
+      })
+      .select('id, driver_handle')
+      .single()
+
+    console.log('INSERT RESULT:', inserted, 'ERROR:', error)
 
     setLoading(false)
 
@@ -74,7 +80,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
+        className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition disabled:opacity-60"
       >
         {loading ? 'Creating…' : 'Create driver'}
       </button>

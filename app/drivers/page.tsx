@@ -27,23 +27,20 @@ function formatAvg(avg: number | null | undefined) {
 
 export default async function DriversPage() {
   noStore()
-
   const supabase = createSupabaseServerClient()
 
   // 1) Load drivers
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
-    .select('id,display_name,driver_handle,city,state')
-    .order('display_name', { ascending: true })
+    .select('id,display_name,driver_handle,city,state,created_at')
+    .order('created_at', { ascending: false }) // NEWEST FIRST so you can immediately see new ones
 
   if (driversErr) {
     return (
       <main className="min-h-screen bg-black text-white p-8">
         <div className="mx-auto max-w-5xl">
           <h1 className="text-2xl font-bold">All drivers</h1>
-          <p className="mt-4 text-red-400">
-            Error loading drivers: {driversErr.message}
-          </p>
+          <p className="mt-4 text-red-400">Error loading drivers: {driversErr.message}</p>
           <Link
             href="/"
             className="mt-6 inline-flex h-11 items-center justify-center rounded-lg border border-white/20 px-5 text-sm font-semibold hover:bg-white/10 transition"
@@ -57,7 +54,7 @@ export default async function DriversPage() {
 
   const drivers = (driversData ?? []) as Driver[]
 
-  // 2) Load stats ONLY for these drivers
+  // 2) Stats only for these drivers
   let statsByDriver = new Map<string, DriverStat>()
 
   if (drivers.length > 0) {
@@ -73,15 +70,7 @@ export default async function DriversPage() {
         <main className="min-h-screen bg-black text-white p-8">
           <div className="mx-auto max-w-5xl">
             <h1 className="text-2xl font-bold">All drivers</h1>
-            <p className="mt-4 text-red-400">
-              Error loading driver stats: {statsErr.message}
-            </p>
-            <Link
-              href="/"
-              className="mt-6 inline-flex h-11 items-center justify-center rounded-lg border border-white/20 px-5 text-sm font-semibold hover:bg-white/10 transition"
-            >
-              Go home
-            </Link>
+            <p className="mt-4 text-red-400">Error loading driver stats: {statsErr.message}</p>
           </div>
         </main>
       )
@@ -97,9 +86,7 @@ export default async function DriversPage() {
         <div className="flex items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">All drivers</h1>
-            <p className="mt-1 text-gray-700">
-              Browse profiles and jump into reviews/traits.
-            </p>
+            <p className="mt-1 text-gray-700">Browse profiles and jump into reviews/traits.</p>
           </div>
 
           <Link

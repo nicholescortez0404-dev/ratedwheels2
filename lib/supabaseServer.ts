@@ -11,6 +11,7 @@ export function createSupabaseServerClient() {
   return createClient(url, anon, {
     auth: { persistSession: false },
     global: {
+      // This is the important part: it forces Next/Vercel to never reuse cached responses
       fetch: (input: RequestInfo | URL, init?: RequestInit) =>
         fetch(input, { ...init, cache: 'no-store' }),
     },
