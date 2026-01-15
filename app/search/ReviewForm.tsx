@@ -12,6 +12,26 @@ type TagRow = {
   is_active?: boolean
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+async function scrollToReviewId(reviewId: string) {
+  // Try for ~2 seconds to find the element (covers refresh/render timing)
+  const targetId = `review-${reviewId}`
+  const started = Date.now()
+
+  while (Date.now() - started < 2000) {
+    const el = document.getElementById(targetId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return true
+    }
+    await sleep(50)
+  }
+  return false
+}
+
 export default function ReviewForm({ driverId }: { driverId: string }) {
   const router = useRouter()
 
@@ -24,9 +44,12 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [toast, setToast] = useState<string | null>(null)
+
   // Load tag options (safe to keep client-side)
   useEffect(() => {
     let mounted = true
+
     ;(async () => {
       const { data, error } = await supabase
         .from('tags')
@@ -49,6 +72,24 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
       mounted = false
     }
   }, [])
+
+  // After a refresh, check if we have a "last posted review" to scroll to.
+  useEffect(() => {
+    const last = sessionStorage.getItem('rw:lastPostedReviewId')
+    if (!last) return
+
+    ;(async () => {
+      await scrollToReviewId(last)
+      sessionStorage.removeItem('rw:lastPostedReviewId')
+    })()
+  }, [])
+
+  // Toast auto-hide
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 2200)
+    return () => clearTimeout(t)
+  }, [toast])
 
   const grouped = useMemo(() => {
     const byCat: Record<string, TagRow[]> = {
@@ -124,12 +165,30 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         return
       }
 
-      // Reset + refresh
+      const newReviewId = json?.review?.id as string | undefined
+
+      // Reset form immediately
       setComment('')
       setStars(5)
       setSelectedTagIds(new Set())
+
+      // Toast
+      setToast('Review posted!')
+
+      // Store id so we can scroll after router.refresh renders the new review
+      if (newReviewId) {
+        sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
+      }
+
       setLoading(false)
+
+      // Refresh server data
       router.refresh()
+
+      // (Optional) If refresh is fast, we can attempt a scroll right away too
+      if (newReviewId) {
+        scrollToReviewId(newReviewId)
+      }
     } catch (err: any) {
       setLoading(false)
       setError(err?.message || 'Failed to post review.')
@@ -165,51 +224,59 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
   }
 
   return (
-    <form onSubmit={onSubmit} className="mt-4 space-y-4">
-      <div className="flex items-center gap-3">
-        <label className="text-gray-900 font-medium">Rating</label>
-        <select
-          value={stars}
-          onChange={(e) => setStars(Number(e.target.value))}
-          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
+    <>
+      {/* Toast */}
+      {toast && (
+        <div className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm">
+          {toast}
+        </div>
+      )}
+
+      <form onSubmit={onSubmit} className="mt-4 space-y-4">
+        <div className="flex items-center gap-3">
+          <label className="text-gray-900 font-medium">Rating</label>
+          <select
+            value={stars}
+            onChange={(e) => setStars(Number(e.target.value))}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
+          >
+            {[5, 4, 3, 2, 1].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-4">
+          <div className="text-gray-900 font-medium">Tags</div>
+          <TagGroup title="Negative" list={grouped.negative ?? []} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
+          <TagGroup title="Positive" list={grouped.positive ?? []} />
+        </div>
+
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Write what happened…"
+          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-black/20"
+          rows={3}
+        />
+
+        <p className="text-xs text-gray-600">
+          Note: some language may be automatically censored. Hate speech/slurs are not allowed.
+        </p>
+
+        {error && <p className="text-red-600">{error}</p>}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition disabled:opacity-60"
         >
-          {[5, 4, 3, 2, 1].map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="space-y-4">
-        <div className="text-gray-900 font-medium">Tags</div>
-        <TagGroup title="Negative" list={grouped.negative ?? []} />
-        <TagGroup title="Neutral" list={grouped.neutral ?? []} />
-        <TagGroup title="Positive" list={grouped.positive ?? []} />
-      </div>
-
-      <textarea
-        value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        placeholder="Write what happened…"
-        className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-black/20"
-        rows={3}
-        
-      />
-      <p className="text-xs text-gray-600">
-  Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-</p>
-
-
-      {error && <p className="text-red-600">{error}</p>}
-
-      <button
-        type="submit"
-        disabled={loading}
-        className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition disabled:opacity-60"
-      >
-        {loading ? 'Posting…' : 'Post review'}
-      </button>
-    </form>
+          {loading ? 'Posting…' : 'Post review'}
+        </button>
+      </form>
+    </>
   )
 }
