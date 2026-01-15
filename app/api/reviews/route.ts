@@ -66,9 +66,23 @@ export async function POST(req: Request) {
 
     const comment = normalize(commentRaw)
 
-    // Profanity filter (bundler-safe)
-    const profanityFilter = await getProfanityFilter()
-    const safeComment = comment ? profanityFilter.clean(comment) : null
+    // Profanity filter (bundler-safe, works with CJS/ESM/double-default)
+const mod: any = await import('bad-words')
+const FilterCtor =
+  mod?.default?.default ?? // sometimes double-default
+  mod?.default ??          // normal default
+  mod                       // fallback
+
+let safeComment: string | null = null
+try {
+  const profanityFilter = new FilterCtor()
+  safeComment = comment ? profanityFilter.clean(comment) : null
+} catch {
+  // If bad-words ever fails to construct for any reason, just store the raw comment.
+  safeComment = comment || null
+}
+
+
 
     // ---------- RATE LIMIT: 1 review per driver per IP forever ----------
     const ip = getIp(req)
