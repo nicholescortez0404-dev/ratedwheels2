@@ -1,9 +1,10 @@
-// app/drivers/page.tsx
-
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
+export const fetchCache = 'force-no-store'
 
+import { unstable_noStore as noStore } from 'next/cache'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabaseClient'
+import { createSupabaseServerClient } from '@/lib/supabaseServer'
 
 type Driver = {
   id: string
@@ -25,6 +26,10 @@ function formatAvg(avg: number | null | undefined) {
 }
 
 export default async function DriversPage() {
+  noStore()
+
+  const supabase = createSupabaseServerClient()
+
   // 1) Load drivers
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
@@ -52,7 +57,7 @@ export default async function DriversPage() {
 
   const drivers = (driversData ?? []) as Driver[]
 
-  // 2) Load stats ONLY for these drivers (better than grabbing all stats)
+  // 2) Load stats ONLY for these drivers
   let statsByDriver = new Map<string, DriverStat>()
 
   if (drivers.length > 0) {
