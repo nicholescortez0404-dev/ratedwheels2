@@ -17,15 +17,17 @@ export default function SortSelect() {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-sm text-gray-700">Sort</span>
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-gray-600">Sort</span>
       <select
         value={sort}
         onChange={(e) => setSort(e.target.value)}
-        className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+        className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
       >
         <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
         <option value="highest">Highest rated</option>
+        <option value="lowest">Lowest rated</option>
       </select>
     </div>
   )
