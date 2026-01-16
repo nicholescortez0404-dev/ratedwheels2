@@ -138,13 +138,11 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ---- City issue flow (THIS is the new, fixed UI) ----
-  // We only show the banner after blur or submit attempt, and it collapses once user decides.
+  // ---- City issue flow (push-down UI) ----
   type CityIssue = null | { type: 'not_found' }
   const [cityIssue, setCityIssue] = useState<CityIssue>(null)
   const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(null)
 
-  // City mismatch gating helpers
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
@@ -162,13 +160,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
-  // Show banner only when:
-  // - state picked
-  // - user typed something
-  // - city is NOT valid
-  // - dropdown is closed (prevents overlap)
-  // - user has blurred or attempted submit
-  // - user has NOT already made a decision
   const showCityBanner =
     statePicked &&
     !loading &&
@@ -285,7 +276,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityActiveIndex(-1)
     setCityLimit(50)
 
-    // reset city issue flow
     setCityTouched(false)
     setSubmitAttempted(false)
     setCityIssue(null)
@@ -378,7 +368,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityOpen && statePicked && !loading) setCityActiveIndex(-1)
   }, [cityOpen, statePicked, loading])
 
-  // Whenever the city becomes valid (or cleared), auto-clear any lingering issue/decision
   useEffect(() => {
     if (!statePicked) return
     const typed = cityInput.trim().length > 0 && !cityNotListed
@@ -392,8 +381,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       setCityDecision(null)
       return
     }
-
-    // mark issue (but banner shows only if blur/submit attempt + dropdown closed)
     setCityIssue({ type: 'not_found' })
   }, [statePicked, cityInput, cityNotListed, cityLooksValid])
 
@@ -407,7 +394,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityValue(v.trim() ? v : null)
     setCityNotListed(false)
 
-    // if they start typing again, reopen flow
     setCityIssue(null)
     setCityDecision(null)
     setSubmitAttempted(false)
@@ -422,7 +408,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
 
-    // resolved
     setCityTouched(false)
     setSubmitAttempted(false)
     setCityIssue(null)
@@ -436,7 +421,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
 
-    // resolved (user chose leave blank)
     setCityTouched(false)
     setSubmitAttempted(false)
     setCityIssue(null)
@@ -489,7 +473,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       if (cityLoading) return
 
       if (cityActiveIndex === -1) {
-        // user selects "City not listed" from menu
         chooseNotListed()
         return
       }
@@ -500,7 +483,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }
 
-  // ---- THE NEW: Banner actions ----
   function onCityEnterAnyway() {
     setCityDecision('enter_anyway')
     setCityIssue(null)
@@ -508,7 +490,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   }
 
   function onCityPickFromList() {
-    setCityDecision('picked_from_list') // collapses banner
+    setCityDecision('picked_from_list')
     setCityIssue(null)
     setCityTouched(false)
     setSubmitAttempted(false)
@@ -529,7 +511,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       )
     }
 
-    // If user chose "Enter anyway" we allow any typed city; otherwise only save if valid.
     const typed = cityInput.trim()
     const allowAny = cityDecision === 'enter_anyway'
 
@@ -565,13 +546,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const typed = cityInput.trim().length > 0
     if (!typed) return true
 
-    // valid -> fine
     if (cityLooksValid) return true
-
-    // decision already made -> allow only if "enter anyway"
     if (cityDecision === 'enter_anyway') return true
 
-    // otherwise block and show banner (after dropdown closes)
     setSubmitAttempted(true)
     setCityOpen(false)
     return false
@@ -648,8 +625,14 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
 
-  const dropdownClass =
+  // ✅ Keep STATE dropdown floating
+  const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+
+  // ✅ Make CITY dropdown push content down (NOT absolute)
+  const cityDropdownClass =
+    'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+
   const dropdownScrollClass = 'max-h-56 overflow-auto'
 
   const cityItemClass = (active: boolean) =>
@@ -703,7 +686,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             />
 
             {stateOpen && !loading && (
-              <div className={dropdownClass}>
+              <div className={stateDropdownClass}>
                 <div className={dropdownScrollClass}>
                   {stateMatches.map((s) => (
                     <button
@@ -724,7 +707,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           </div>
 
           {/* CITY */}
-          <div ref={cityBoxRef} className="relative flex-1">
+          <div ref={cityBoxRef} className="flex-1">
             <input
               ref={cityInputRef}
               value={cityInput}
@@ -743,7 +726,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
-              <div className={dropdownClass}>
+              <div className={cityDropdownClass}>
                 <div ref={cityListRef} className={dropdownScrollClass}>
                   <button
                     type="button"
@@ -825,7 +808,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           </div>
         </div>
 
-        {/* ✅ NEW COLLAPSING BANNER (replaces the old mismatch panel UI) */}
+        {/* ✅ COLLAPSING BANNER (in normal flow, pushes content down) */}
         <div
           className={[
             'overflow-hidden transition-all duration-200',
