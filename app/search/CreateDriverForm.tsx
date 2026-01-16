@@ -157,8 +157,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return inserted as InsertedDriver
   }
 
-  async function onCreateOnly(e: React.MouseEvent<HTMLButtonElement>) {
-    e.preventDefault()
+  async function onCreateOnly() {
     if (loading) return
 
     setLoading(true)
@@ -196,7 +195,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const row = await createDriver()
       const nextHandle = row?.driver_handle ?? handle
 
-      // 2) post review (goes through your moderation API)
+      // 2) post review (moderation API)
       const res = await fetch('/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -210,7 +209,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        // driver exists now, but review failed — keep user here with clear error
         setError(json?.error || 'Driver created, but review failed to post.')
         setLoading(false)
         return
@@ -221,7 +219,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
       }
 
-      // 3) send them to the driver page where the review will appear
       router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
       router.refresh()
     } catch (err: any) {
@@ -233,21 +230,25 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   const disablePrimary = loading || overLimit
 
+  // ✅ SAME INPUT THEME AS YOUR REGULAR REVIEW FORM
+  const inputClass =
+    'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
+    'focus:outline-none focus:ring-2 focus:ring-black/20'
+
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
-      {/* New copy (only place it appears) */}
       <p className="text-gray-900">
         We couldn’t find this driver yet. Be the first to create and review{' '}
         <span className="font-semibold">@{handle}</span>.
       </p>
 
-      {/* Driver fields */}
+      {/* Driver fields (now matching your site theme) */}
       <div className="space-y-3">
         <input
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Display name (ex: Tom (4546))"
-          className="w-full rounded-md border border-gray-300 bg-black px-3 py-2 text-white placeholder:text-gray-300"
+          placeholder="Display name (ex: Tom (4839))"
+          className={inputClass}
         />
 
         <div className="flex gap-3">
@@ -255,13 +256,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             value={city}
             onChange={(e) => setCity(e.target.value)}
             placeholder="City"
-            className="w-full rounded-md border border-gray-300 bg-black px-3 py-2 text-white placeholder:text-gray-300"
+            className={inputClass}
           />
           <input
             value={state}
             onChange={(e) => setState(e.target.value)}
             placeholder="State (IL)"
-            className="w-32 rounded-md border border-gray-300 bg-black px-3 py-2 text-white placeholder:text-gray-300"
+            className={'w-32 ' + inputClass}
           />
         </div>
       </div>
@@ -290,7 +291,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           <TagGroup title="Positive" list={grouped.positive ?? []} />
         </div>
 
-        {/* Comment box w/ counter */}
         <div className="space-y-2">
           <div className="relative">
             <textarea
@@ -337,7 +337,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
       {error && <p className="text-red-600">{error}</p>}
 
-      {/* Primary CTA */}
       <button
         type="submit"
         disabled={disablePrimary}
@@ -347,7 +346,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         {loading ? 'Posting…' : 'Create driver & post review'}
       </button>
 
-      {/* Secondary (bottom) link */}
       <div className="pt-1">
         <button
           type="button"
