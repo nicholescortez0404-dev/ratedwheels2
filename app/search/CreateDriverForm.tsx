@@ -124,7 +124,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [cityOpen, setCityOpen] = useState(false)
   const [cityLoading, setCityLoading] = useState(false)
   const [citySuggestions, setCitySuggestions] = useState<string[]>([])
-  const [cityLimit, setCityLimit] = useState<number>(50)
+  const [cityLimit, setCityLimit] = useState<number>(100) // slightly higher by default for better "type 1 letter" experience
   const cityBoxRef = useRef<HTMLDivElement | null>(null)
   const cityInputRef = useRef<HTMLInputElement | null>(null)
   const cityListRef = useRef<HTMLDivElement | null>(null)
@@ -162,10 +162,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const statePicked = state.trim().length === 2
   const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
 
-  // ---- State keyboard helpers ----
-  const stateHasMenu = stateOpen && stateMatches.length > 0
-  const stateMaxIdx = stateMatches.length ? stateMatches.length - 1 : -1
-
   function scrollActiveStateIntoView(nextIdx: number) {
     if (!stateListRef.current) return
     const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
@@ -183,8 +179,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     !normalizedCityInput ||
     cityNotListed ||
     citySuggestions.some((c) => c.trim().toLowerCase() === normalizedCityInput)
-
-  const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
   // Banner: show on blur/submit OR immediately when we know there are no matches
   const typedCity = cityInput.trim().length > 0
@@ -207,7 +201,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCitySuggestions([])
     setCityOpen(false)
     setCityActiveIndex(-1)
-    setCityLimit(50)
+    setCityLimit(100)
 
     setCityTouched(false)
     setSubmitAttempted(false)
@@ -374,7 +368,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setStateOpen(true)
     setStateActiveIndex(-1)
 
-    // keep statePicked accurate only when it's a real 2-letter code
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
@@ -478,10 +471,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const t = setTimeout(async () => {
       setCityLoading(true)
 
+      // ✅ IMPORTANT CHANGE:
+      // Use the SAME scrollable limit for typed searches too, so typing "c", "ch", "chi"
+      // shows ALL matches (within the selected state) up to cityLimit.
       const { data, error } = await supabase.rpc('city_suggestions', {
         p_state: state,
         p_query: shouldFetchSearch ? q : '',
-        p_limit: shouldFetchSearch ? 10 : cityLimit,
+        p_limit: cityLimit,
       })
 
       if (cityFetchId.current !== myId) return
@@ -507,7 +503,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       }
 
       setCityActiveIndex(-1)
-    }, shouldFetchSearch ? 150 : 0)
+    }, shouldFetchSearch ? 120 : 0)
 
     return () => clearTimeout(t)
   }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
@@ -536,7 +532,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityValue(v.trim() ? v : null)
     setCityNotListed(false)
 
-    // typing resets decision and banner triggers
     setCityIssue(null)
     setCityDecision(null)
     setSubmitAttempted(false)
@@ -621,7 +616,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const anyResults = citySuggestions.length > 0
     const maxIdx = anyResults ? citySuggestions.length - 1 : -1
 
-    // TAB: close menu and trigger banner if invalid (don't prevent default)
     if (e.key === 'Tab') {
       if (cityOpen) {
         suppressCityOpenRef.current = true
@@ -679,7 +673,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         return
       }
 
-      // If menu open, Enter should not submit the form
       if (hasMenu) {
         e.preventDefault()
         if (cityLoading) return
@@ -695,9 +688,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         setCityActiveIndex(-1)
         return
       }
-
-      // otherwise allow normal submit
-      return
     }
   }
 
@@ -748,7 +738,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityLooksValid) return true
     if (cityDecision === 'enter_anyway') return true
 
-    // block submit and show banner
     suppressCityOpenRef.current = true
     setCityOpen(false)
     setCityActiveIndex(-1)
@@ -829,11 +818,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
 
-  // STATE dropdown floats
   const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  // CITY dropdown pushes down
   const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const dropdownScrollClass = 'max-h-56 overflow-auto'
@@ -843,6 +830,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       'w-full text-left px-3 py-2 text-sm transition',
       active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
     ].join(' ')
+
+  // show "Load more" when we likely hit the limit
+  const showLoadMoreCities = citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
@@ -962,7 +952,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'No cities loaded yet.'}
+                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'Start typing to filter.'}
                     </div>
                   ) : (
                     <>
@@ -990,20 +980,20 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                         </button>
                       ))}
 
-                      {isBrowsingCities && (
+                      {showLoadMoreCities && (
                         <button
                           type="button"
                           onMouseDown={(e) => {
                             e.preventDefault()
-                            setCityLimit((p) => Math.min(p + 100, 2000))
+                            setCityLimit((p) => Math.min(p + 200, 2000))
                           }}
                           onPointerDown={(e) => {
                             e.preventDefault()
-                            setCityLimit((p) => Math.min(p + 100, 2000))
+                            setCityLimit((p) => Math.min(p + 200, 2000))
                           }}
                           onClick={(e) => {
                             e.preventDefault()
-                            setCityLimit((p) => Math.min(p + 100, 2000))
+                            setCityLimit((p) => Math.min(p + 200, 2000))
                           }}
                           className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         >
