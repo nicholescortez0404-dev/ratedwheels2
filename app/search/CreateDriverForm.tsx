@@ -141,7 +141,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   // ---- City issue flow (push-down UI) ----
   type CityIssue = null | { type: 'not_found' }
   const [cityIssue, setCityIssue] = useState<CityIssue>(null)
-  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(null)
+  const [cityDecision, setCityDecision] = useState<
+    null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'
+  >(null)
 
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
@@ -169,6 +171,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     !cityOpen &&
     (cityTouched || submitAttempted) &&
     !cityDecision
+
+  function isInvalidTypedCity() {
+    return (
+      statePicked &&
+      !cityNotListed &&
+      cityInput.trim().length > 0 &&
+      !cityLooksValid
+    )
+  }
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -368,6 +379,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityOpen && statePicked && !loading) setCityActiveIndex(-1)
   }, [cityOpen, statePicked, loading])
 
+  // Keep issue state in sync
   useEffect(() => {
     if (!statePicked) return
     const typed = cityInput.trim().length > 0 && !cityNotListed
@@ -433,6 +445,43 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     el?.scrollIntoView({ block: 'nearest' })
   }
 
+  // ---- Banner actions ----
+  function onCityEnterAnyway() {
+    setCityDecision('enter_anyway')
+    setCityIssue(null)
+    setError(null)
+  }
+
+  function onCityPickFromList() {
+    setCityDecision('picked_from_list')
+    setCityIssue(null)
+    setCityTouched(false)
+    setSubmitAttempted(false)
+    setCityOpen(true)
+    setTimeout(() => cityInputRef.current?.focus(), 0)
+  }
+
+  function onCityLeaveBlank() {
+    chooseNotListed()
+  }
+
+  // ✅ ENTER + TAB BEHAVIOR
+  // - Tab/blur: closes dropdown and triggers banner (if invalid)
+  // - Enter: if invalid typed city, acts like "Enter anyway"
+  function onCityBlur() {
+    // allow a click inside the dropdown without instantly triggering banner
+    // (we close dropdown via outside click handler / click handlers)
+    if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
+
+    // close menu so banner can show in-flow
+    setCityOpen(false)
+    setCityActiveIndex(-1)
+
+    if (isInvalidTypedCity()) {
+      setSubmitAttempted(true) // show banner after blur/tab
+    }
+  }
+
   function onCityKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!statePicked || loading) return
 
@@ -445,6 +494,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         e.preventDefault()
         setCityOpen(false)
         setCityActiveIndex(-1)
+      }
+      if (isInvalidTypedCity()) {
+        setSubmitAttempted(true)
       }
       return
     }
@@ -468,38 +520,32 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
 
     if (e.key === 'Enter') {
-      if (!hasMenu) return
-      e.preventDefault()
-      if (cityLoading) return
+      // If menu is open and a suggestion is highlighted -> pick it
+      if (hasMenu) {
+        e.preventDefault()
+        if (cityLoading) return
 
-      if (cityActiveIndex === -1) {
-        chooseNotListed()
+        if (cityActiveIndex >= 0) {
+          const picked = citySuggestions[cityActiveIndex]
+          if (picked) pickCitySuggestion(picked)
+          return
+        }
+
+        // Nothing highlighted: close menu
+        setCityOpen(false)
+        setCityActiveIndex(-1)
+      }
+
+      // ✅ If typed city is invalid, Enter should act like "Enter anyway"
+      if (isInvalidTypedCity()) {
+        e.preventDefault()
+        onCityEnterAnyway()
         return
       }
 
-      const picked = citySuggestions[cityActiveIndex]
-      if (picked) pickCitySuggestion(picked)
+      // otherwise allow normal submit behavior
       return
     }
-  }
-
-  function onCityEnterAnyway() {
-    setCityDecision('enter_anyway')
-    setCityIssue(null)
-    setError(null)
-  }
-
-  function onCityPickFromList() {
-    setCityDecision('picked_from_list')
-    setCityIssue(null)
-    setCityTouched(false)
-    setSubmitAttempted(false)
-    setCityOpen(true)
-    setTimeout(() => cityInputRef.current?.focus(), 0)
-  }
-
-  function onCityLeaveBlank() {
-    chooseNotListed()
   }
 
   async function createDriver(): Promise<InsertedDriver> {
@@ -551,6 +597,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     setSubmitAttempted(true)
     setCityOpen(false)
+    setCityActiveIndex(-1)
     return false
   }
 
@@ -629,7 +676,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  // ✅ Make CITY dropdown push content down (NOT absolute)
+  // ✅ Make CITY dropdown push content down
   const cityDropdownClass =
     'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
@@ -713,10 +760,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               value={cityInput}
               onChange={(e) => onCityChange(e.target.value)}
               onFocus={onCityFocus}
-              onBlur={() => {
-                if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
-              }}
-              onKeyDown={onCityKeyDown}
+              onBlur={onCityBlur} // ✅ tab/blur behavior
+              onKeyDown={onCityKeyDown} // ✅ enter behavior
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
               className={[
@@ -808,7 +853,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           </div>
         </div>
 
-        {/* ✅ COLLAPSING BANNER (in normal flow, pushes content down) */}
+        {/* ✅ COLLAPSING BANNER (pushes content down) */}
         <div
           className={[
             'overflow-hidden transition-all duration-200',
@@ -819,7 +864,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3">
               <div className="text-sm text-yellow-900">
                 <div className="font-medium">City not found for {state}.</div>
-                <div className="opacity-80">How do you want to proceed?</div>
+                <div className="opacity-80">
+                  Press <span className="font-semibold">Enter</span> to accept anyway, or choose an option:
+                </div>
               </div>
 
               <div className="flex gap-2 shrink-0">
@@ -884,7 +931,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onChange={(e) => {
                 const v = e.target.value
                 setComment(v)
-                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) setError(null)
+                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment'))
+                  setError(null)
               }}
               placeholder="Write what happened…"
               rows={3}
@@ -910,7 +958,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to{' '}
+              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 
