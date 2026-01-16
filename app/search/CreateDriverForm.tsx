@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -12,10 +12,93 @@ type TagRow = {
   is_active?: boolean
 }
 
+type CitySuggestionRow = {
+  name: string
+}
+
 const MAX_COMMENT_CHARS = 500
+
+// DB constraint: ^[a-z0-9]{1,4}-[a-z]{2,24}$
+const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
 
 function normalizeHandle(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, '-')
+}
+
+function normalizeCityLabel(name: string) {
+  return name.trim().replace(/\s+(city|town|village|borough|cdp)$/i, '')
+}
+
+const STATES: { code: string; name: string }[] = [
+  { code: 'AL', name: 'Alabama' },
+  { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' },
+  { code: 'AR', name: 'Arkansas' },
+  { code: 'CA', name: 'California' },
+  { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' },
+  { code: 'DE', name: 'Delaware' },
+  { code: 'DC', name: 'District of Columbia' },
+  { code: 'FL', name: 'Florida' },
+  { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' },
+  { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' },
+  { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' },
+  { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' },
+  { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' },
+  { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' },
+  { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' },
+  { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' },
+  { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' },
+  { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' },
+  { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' },
+  { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' },
+  { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' },
+  { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' },
+  { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' },
+  { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' },
+  { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' },
+  { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' },
+  { code: 'VA', name: 'Virginia' },
+  { code: 'WA', name: 'Washington' },
+  { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' },
+  { code: 'WY', name: 'Wyoming' },
+]
+
+function bestStateMatches(qRaw: string, limit = 8) {
+  const q = qRaw.trim().toLowerCase()
+  if (!q) return STATES.slice(0, limit)
+
+  const starts: typeof STATES = []
+  const contains: typeof STATES = []
+
+  for (const s of STATES) {
+    const code = s.code.toLowerCase()
+    const name = s.name.toLowerCase()
+
+    if (code.startsWith(q) || name.startsWith(q)) starts.push(s)
+    else if (code.includes(q) || name.includes(q)) contains.push(s)
+  }
+
+  return [...starts, ...contains].slice(0, limit)
 }
 
 type InsertedDriver = {
@@ -25,13 +108,28 @@ type InsertedDriver = {
 
 export default function CreateDriverForm({ initialRaw }: { initialRaw: string }) {
   const router = useRouter()
-
   const handle = normalizeHandle(initialRaw)
+  const handleValid = HANDLE_RE.test(handle)
 
   // driver fields
   const [displayName, setDisplayName] = useState(initialRaw.trim())
-  const [city, setCity] = useState('')
-  const [state, setState] = useState('')
+
+  // State typeahead
+  const [stateInput, setStateInput] = useState('')
+  const [state, setState] = useState('') // selected 2-letter code
+  const [stateOpen, setStateOpen] = useState(false)
+  const stateBoxRef = useRef<HTMLDivElement | null>(null)
+
+  // City typeahead (optional)
+  const [cityInput, setCityInput] = useState('')
+  const [cityValue, setCityValue] = useState<string | null>(null)
+  const [cityNotListed, setCityNotListed] = useState(false)
+  const [cityOpen, setCityOpen] = useState(false)
+  const [cityLoading, setCityLoading] = useState(false)
+  const [citySuggestions, setCitySuggestions] = useState<string[]>([])
+  const cityBoxRef = useRef<HTMLDivElement | null>(null)
+  const cityInputRef = useRef<HTMLInputElement | null>(null)
+  const cityFetchId = useRef(0)
 
   // review fields
   const [stars, setStars] = useState<number>(5)
@@ -39,17 +137,36 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [tags, setTags] = useState<TagRow[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
 
-  // ui state
+  // ui
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const commentCount = comment.length
   const overLimit = commentCount > MAX_COMMENT_CHARS
 
+  const statePicked = state.trim().length === 2
+
+  const stateMatches = useMemo(() => bestStateMatches(stateInput, 8), [stateInput])
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as Node
+
+      if (stateBoxRef.current && !stateBoxRef.current.contains(target)) {
+        setStateOpen(false)
+      }
+      if (cityBoxRef.current && !cityBoxRef.current.contains(target)) {
+        setCityOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
   // Load tag options
   useEffect(() => {
     let mounted = true
-
     ;(async () => {
       const { data, error } = await supabase
         .from('tags')
@@ -141,14 +258,141 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     )
   }
 
+  function pickState(code: string) {
+    const up = code.toUpperCase().trim()
+    const match = STATES.find((s) => s.code === up)
+    if (!match) return
+
+    setState(up)
+    setStateInput(up)
+    setStateOpen(false)
+
+    // Changing state invalidates city choice
+    setCityInput('')
+    setCityValue(null)
+    setCityNotListed(false)
+    setCitySuggestions([])
+    setCityOpen(false)
+
+    if (error) setError(null)
+  }
+
+  // Commit state = pick it + focus city (requested behavior)
+  function commitState(code: string) {
+    pickState(code)
+    setTimeout(() => {
+      cityInputRef.current?.focus()
+    }, 0)
+  }
+
+  function onStateChange(v: string) {
+    const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
+    setStateInput(cleaned)
+    setStateOpen(true)
+
+    // Only "selected" when it exactly matches a state code (but DON'T auto-close here)
+    const maybeCode = cleaned.trim().slice(0, 2)
+    if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
+      setState(maybeCode)
+    } else {
+      setState('')
+      // if they unselect state, lock city again
+      setCityInput('')
+      setCityValue(null)
+      setCityNotListed(false)
+      setCitySuggestions([])
+      setCityOpen(false)
+    }
+  }
+
+  // Fetch city suggestions
+  useEffect(() => {
+    if (!statePicked) {
+      setCitySuggestions([])
+      setCityOpen(false)
+      setCityLoading(false)
+      return
+    }
+    if (cityNotListed) return
+
+    const q = cityInput.trim()
+    if (q.length === 0) {
+      setCitySuggestions([])
+      return
+    }
+
+    const myId = ++cityFetchId.current
+    const t = setTimeout(async () => {
+      setCityLoading(true)
+      const { data, error } = await supabase.rpc('city_suggestions', {
+        p_state: state,
+        p_query: q,
+        p_limit: 10,
+      })
+
+      if (cityFetchId.current !== myId) return
+
+      if (error) {
+        setCitySuggestions([])
+        setCityLoading(false)
+        return
+      }
+
+      const rows = (data ?? []) as CitySuggestionRow[]
+      const names = rows.map((r) => normalizeCityLabel(r.name)).filter(Boolean)
+      const uniq = Array.from(new Set(names))
+      setCitySuggestions(uniq)
+      setCityLoading(false)
+      setCityOpen(true)
+    }, 150)
+
+    return () => clearTimeout(t)
+  }, [statePicked, state, cityInput, cityNotListed])
+
+  function onCityFocus() {
+    if (!statePicked) return
+    setCityOpen(true)
+  }
+
+  function onCityChange(v: string) {
+    setCityInput(v)
+    setCityValue(v.trim() ? v : null)
+    setCityNotListed(false)
+    if (statePicked) setCityOpen(true)
+  }
+
+  function pickCitySuggestion(name: string) {
+    setCityInput(name)
+    setCityValue(name)
+    setCityNotListed(false)
+    setCityOpen(false)
+  }
+
+  function chooseNotListed() {
+    setCityInput('')
+    setCityValue(null)
+    setCityNotListed(true)
+    setCityOpen(false)
+  }
+
   async function createDriver(): Promise<InsertedDriver> {
+    if (!statePicked) throw new Error('Please select a state.')
+
+    if (!handleValid) {
+      throw new Error(
+        'Driver handle format is invalid. It must look like "8841-mike" (1–4 letters/numbers, dash, 2–24 letters).'
+      )
+    }
+
+    const cityToSave = cityNotListed ? null : cityValue?.trim() ? cityValue.trim() : null
+
     const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
       .insert({
         driver_handle: handle,
         display_name: displayName.trim() || handle,
-        city: city.trim() || null,
-        state: state.trim() || null,
+        city: cityToSave,
+        state,
       })
       .select('id, driver_handle')
       .single()
@@ -159,7 +403,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   async function onCreateOnly() {
     if (loading) return
-
     setLoading(true)
     setError(null)
 
@@ -191,11 +434,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const tagIds = Array.from(selectedTagIds)
 
     try {
-      // 1) create driver
       const row = await createDriver()
       const nextHandle = row?.driver_handle ?? handle
 
-      // 2) post review (moderation API)
       const res = await fetch('/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,9 +469,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }
 
-  const disablePrimary = loading || overLimit
+  const disablePrimary = loading || overLimit || !statePicked || !handleValid
+  const disableCreateOnly = loading || !statePicked || !handleValid
 
-  // ✅ SAME INPUT THEME AS YOUR REGULAR REVIEW FORM
   const inputClass =
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
@@ -242,28 +483,132 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         <span className="font-semibold">@{handle}</span>.
       </p>
 
-      {/* Driver fields (now matching your site theme) */}
+      {!handleValid && (
+        <p className="text-sm text-red-600">
+          This driver handle format is invalid. It must look like{' '}
+          <strong>8841-mike</strong> (1–4 letters/numbers, a dash, then 2–24 letters).
+        </p>
+      )}
+
       <div className="space-y-3">
         <input
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="Display name (ex: Tom (4839))"
           className={inputClass}
+          disabled={loading}
         />
 
         <div className="flex gap-3">
-          <input
-            value={city}
-            onChange={(e) => setCity(e.target.value)}
-            placeholder="City"
-            className={inputClass}
-          />
-          <input
-            value={state}
-            onChange={(e) => setState(e.target.value)}
-            placeholder="State (IL)"
-            className={'w-32 ' + inputClass}
-          />
+          {/* City (optional) */}
+          <div ref={cityBoxRef} className="relative flex-1">
+            <input
+              ref={cityInputRef}
+              value={cityInput}
+              onChange={(e) => onCityChange(e.target.value)}
+              onFocus={onCityFocus}
+              placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
+              disabled={!statePicked || loading}
+              className={[
+                inputClass,
+                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
+              ].join(' ')}
+            />
+
+            {statePicked && cityOpen && !loading && (
+              <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg">
+                <button
+                  type="button"
+                  onClick={chooseNotListed}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
+                >
+                  City not listed
+                  <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
+                </button>
+
+                <div className="h-px bg-gray-200" />
+
+                {cityLoading ? (
+                  <div className="px-3 py-2 text-sm text-gray-600">Searching…</div>
+                ) : citySuggestions.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-600">
+                    {cityInput.trim().length ? 'No matches. You can keep typing.' : 'Start typing to see suggestions.'}
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-auto">
+                    {citySuggestions.slice(0, 10).map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => pickCitySuggestion(name)}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {statePicked && cityNotListed && (
+              <div className="mt-1 text-xs text-gray-600">
+                City will be left blank.
+                <button
+                  type="button"
+                  className="ml-2 underline underline-offset-2 hover:text-gray-900"
+                  onClick={() => {
+                    setCityNotListed(false)
+                    setCityOpen(true)
+                  }}
+                >
+                  Add a city instead
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* State (required) typeahead */}
+          <div ref={stateBoxRef} className="relative w-40">
+            <input
+              value={stateInput}
+              onChange={(e) => onStateChange(e.target.value)}
+              onFocus={() => setStateOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== 'Tab') return
+
+                const code = stateInput.trim().toUpperCase().slice(0, 2)
+                const isValid = STATES.some((s) => s.code === code)
+
+                // Commit only when it's an exact 2-letter code AND they pressed Enter/Tab
+                if (isValid && stateInput.trim().length <= 2) {
+                  e.preventDefault()
+                  commitState(code)
+                }
+              }}
+              placeholder="State (IL)"
+              disabled={loading}
+              className={[inputClass, loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
+            />
+
+            {stateOpen && !loading && (
+              <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg">
+                {stateMatches.map((s) => (
+                  <button
+                    key={s.code}
+                    type="button"
+                    onClick={() => commitState(s.code)}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
+                  >
+                    <span className="font-semibold">{s.code}</span>
+                    <span className="ml-2 text-gray-600">{s.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
+          </div>
         </div>
       </div>
 
@@ -275,6 +620,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             value={stars}
             onChange={(e) => setStars(Number(e.target.value))}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
+            disabled={loading}
           >
             {[5, 4, 3, 2, 1].map((n) => (
               <option key={n} value={n}>
@@ -304,11 +650,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               }}
               placeholder="Write what happened…"
               rows={3}
+              disabled={loading}
               className={[
                 'w-full rounded-md border bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 outline-none transition',
                 overLimit
                   ? 'border-red-500 ring-1 ring-red-500 focus:ring-2 focus:ring-red-500'
                   : 'border-gray-300 focus:ring-2 focus:ring-black/20',
+                loading ? 'opacity-60 cursor-not-allowed' : '',
               ].join(' ')}
             />
 
@@ -341,7 +689,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         type="submit"
         disabled={disablePrimary}
         className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-        title={overLimit ? `Shorten comment to ${MAX_COMMENT_CHARS} chars to submit` : undefined}
+        title={
+          !statePicked
+            ? 'Pick a state to continue'
+            : !handleValid
+              ? 'Driver handle format invalid'
+              : overLimit
+                ? `Shorten comment to ${MAX_COMMENT_CHARS} chars to submit`
+                : undefined
+        }
       >
         {loading ? 'Posting…' : 'Create driver & post review'}
       </button>
@@ -350,8 +706,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         <button
           type="button"
           onClick={onCreateOnly}
-          disabled={loading}
-          className="text-xs text-gray-600 underline underline-offset-2 hover:text-gray-900 disabled:opacity-60"
+          disabled={disableCreateOnly}
+          className="text-xs text-gray-600 underline underline-offset-2 hover:text-gray-900 disabled:opacity-60 disabled:cursor-not-allowed"
+          title={!statePicked ? 'Pick a state to continue' : !handleValid ? 'Driver handle format invalid' : undefined}
         >
           Create driver only
         </button>
