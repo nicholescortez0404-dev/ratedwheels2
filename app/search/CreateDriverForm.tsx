@@ -147,9 +147,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   // ---- City issue flow (push-down UI) ----
   type CityIssue = null | { type: 'not_found' }
   const [cityIssue, setCityIssue] = useState<CityIssue>(null)
-  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(
-    null
-  )
+  const [cityDecision, setCityDecision] = useState<
+    null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'
+  >(null)
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
@@ -311,7 +311,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           {list.map((t) => {
             const selected = selectedTagIds.has(t.id)
             return (
-              <button key={t.id} type="button" onClick={() => toggleTag(t.id)} className={chipClass(t.category, selected)}>
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => toggleTag(t.id)}
+                className={chipClass(t.category, selected)}
+              >
                 {t.label}
               </button>
             )
@@ -569,7 +574,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const typed = cityInput.trim().length > 0
 
       // Enter = "Enter anyway" ONLY when there are 0 matches
-      const shouldEnterAnyway = typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
+      const shouldEnterAnyway =
+        typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
 
       if (shouldEnterAnyway) {
         e.preventDefault()
@@ -828,7 +834,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
-              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
+              className={[
+                inputClass,
+                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
+              ].join(' ')}
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
@@ -841,7 +850,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     onClick={chooseNotListed}
                     className={cityItemClass(cityActiveIndex === -1)}
                   >
-                    City not listed <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
+                    City not listed{' '}
+                    <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
                   </button>
 
                   <div className="h-px bg-gray-200" />
@@ -850,7 +860,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'No cities loaded yet.'}
+                      {cityInput.trim().length
+                        ? 'No matches. Press Enter to use it anyway.'
+                        : 'No cities loaded yet.'}
                     </div>
                   ) : (
                     <>
@@ -924,8 +936,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         >
           {showCityBanner && (
             <div
-              className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3"
-              // ✅ THE REAL FIX: prevents input blur from eating the first click
+              className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+              // ✅ prevents input blur/outside-click from eating the first click
               onMouseDown={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -936,7 +948,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                 <div className="opacity-80">How do you want to proceed?</div>
               </div>
 
-              <div className="flex gap-2 shrink-0">
+              <div className="flex flex-wrap gap-2 sm:shrink-0">
                 <button
                   type="button"
                   className="px-3 py-2 rounded-md bg-black text-white text-sm"
@@ -998,7 +1010,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onChange={(e) => {
                 const v = e.target.value
                 setComment(v)
-                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) setError(null)
+                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) {
+                  setError(null)
+                }
               }}
               placeholder="Write what happened…"
               rows={3}
