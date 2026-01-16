@@ -119,10 +119,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [state, setState] = useState('') // selected 2-letter code
   const [stateOpen, setStateOpen] = useState(false)
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
-  const stateListRef = useRef<HTMLDivElement | null>(null)
-
-  // State keyboard navigation (0..n-1)
-  const [stateActiveIndex, setStateActiveIndex] = useState<number>(0)
 
   // City typeahead (optional)
   const [cityInput, setCityInput] = useState('')
@@ -131,6 +127,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [cityOpen, setCityOpen] = useState(false)
   const [cityLoading, setCityLoading] = useState(false)
   const [citySuggestions, setCitySuggestions] = useState<string[]>([])
+  const [cityLimit, setCityLimit] = useState<number>(50) // browse list size; "Load more" bumps this
   const cityBoxRef = useRef<HTMLDivElement | null>(null)
   const cityInputRef = useRef<HTMLInputElement | null>(null)
   const cityListRef = useRef<HTMLDivElement | null>(null)
@@ -283,6 +280,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCitySuggestions([])
     setCityOpen(false)
     setCityActiveIndex(-1)
+    setCityLimit(50)
 
     if (error) setError(null)
   }
@@ -292,6 +290,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     pickState(code)
     setTimeout(() => {
       cityInputRef.current?.focus()
+      setCityOpen(true)
     }, 0)
   }
 
@@ -313,80 +312,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       setCitySuggestions([])
       setCityOpen(false)
       setCityActiveIndex(-1)
+      setCityLimit(50)
     }
   }
 
-  // STATE: when menu opens or matches change, keep active index in-range
-  useEffect(() => {
-    if (!stateOpen) return
-    setStateActiveIndex((prev) => {
-      if (stateMatches.length === 0) return 0
-      if (prev < 0) return 0
-      if (prev > stateMatches.length - 1) return 0
-      return prev
-    })
-  }, [stateOpen, stateMatches])
+  const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
-  function scrollActiveStateIntoView(nextIdx: number) {
-    if (!stateListRef.current) return
-    const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
-  }
-
-  function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (loading) return
-    const hasMenu = stateOpen
-    const maxIdx = stateMatches.length > 0 ? stateMatches.length - 1 : 0
-
-    if (e.key === 'Escape') {
-      if (stateOpen) {
-        e.preventDefault()
-        setStateOpen(false)
-      }
-      return
-    }
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-
-      if (!hasMenu) {
-        setStateOpen(true)
-        setStateActiveIndex(0)
-        return
-      }
-
-      setStateActiveIndex((prev) => {
-        let next = prev
-        if (e.key === 'ArrowDown') {
-          next = prev < maxIdx ? prev + 1 : 0
-        } else {
-          next = prev > 0 ? prev - 1 : maxIdx
-        }
-        setTimeout(() => scrollActiveStateIntoView(next), 0)
-        return next
-      })
-      return
-    }
-
-    if (e.key === 'Enter') {
-      if (!hasMenu) return
-      e.preventDefault()
-      const picked = stateMatches[stateActiveIndex]
-      if (picked) commitState(picked.code)
-      return
-    }
-
-    // Optional: Tab to select highlighted if menu open (feels good)
-    if (e.key === 'Tab' && hasMenu) {
-      const picked = stateMatches[stateActiveIndex]
-      if (picked) commitState(picked.code)
-      // allow tab to continue naturally after selection? If you prefer:
-      // e.preventDefault()
-      return
-    }
-  }
-
-  // Fetch city suggestions
+  // Fetch city suggestions:
+  // - If cityInput has text => search suggestions
+  // - If cityInput empty AND dropdown open => browse list (alphabetical) for that state
   useEffect(() => {
     if (!statePicked) {
       setCitySuggestions([])
@@ -397,20 +331,23 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
     if (cityNotListed) return
 
+    // Only fetch browse list when dropdown is open and input empty
     const q = cityInput.trim()
-    if (q.length === 0) {
-      setCitySuggestions([])
-      setCityActiveIndex(-1)
+    const shouldFetchBrowse = cityOpen && q.length === 0
+    const shouldFetchSearch = q.length > 0
+
+    if (!shouldFetchBrowse && !shouldFetchSearch) {
       return
     }
 
     const myId = ++cityFetchId.current
     const t = setTimeout(async () => {
       setCityLoading(true)
+
       const { data, error } = await supabase.rpc('city_suggestions', {
         p_state: state,
-        p_query: q,
-        p_limit: 10,
+        p_query: shouldFetchSearch ? q : '',
+        p_limit: shouldFetchSearch ? 10 : cityLimit,
       })
 
       if (cityFetchId.current !== myId) return
@@ -429,12 +366,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       setCityLoading(false)
       setCityOpen(true)
       setCityActiveIndex(-1)
-    }, 150)
+    }, shouldFetchSearch ? 150 : 0)
 
     return () => clearTimeout(t)
-  }, [statePicked, state, cityInput, cityNotListed])
+  }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
 
-  // When city dropdown opens, reset highlight to "City not listed" for predictable keyboard UX
+  // When city dropdown opens, reset highlight
   useEffect(() => {
     if (cityOpen && statePicked && !loading) {
       setCityActiveIndex(-1)
@@ -632,12 +569,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
   const dropdownScrollClass = 'max-h-56 overflow-auto'
 
-  const stateItemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
-
   const cityItemClass = (active: boolean) =>
     [
       'w-full text-left px-3 py-2 text-sm transition',
@@ -674,7 +605,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               value={stateInput}
               onChange={(e) => onStateChange(e.target.value)}
               onFocus={() => setStateOpen(true)}
-              onKeyDown={onStateKeyDown}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== 'Tab') return
+                const code = stateInput.trim().toUpperCase().slice(0, 2)
+                const isValid = STATES.some((s) => s.code === code)
+                if (isValid && stateInput.trim().length <= 2) {
+                  e.preventDefault()
+                  commitState(code)
+                }
+              }}
               placeholder="State (IL)"
               disabled={loading}
               className={[inputClass, loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
@@ -682,15 +621,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
             {stateOpen && !loading && (
               <div className={dropdownClass}>
-                <div ref={stateListRef} className={dropdownScrollClass}>
-                  {stateMatches.map((s, idx) => (
+                <div className={dropdownScrollClass}>
+                  {stateMatches.map((s) => (
                     <button
                       key={s.code}
                       type="button"
-                      data-state-idx={idx}
-                      onMouseEnter={() => setStateActiveIndex(idx)}
                       onClick={() => commitState(s.code)}
-                      className={stateItemClass(stateActiveIndex === idx)}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
                     >
                       <span className="font-semibold">{s.code}</span>
                       <span className="ml-2 text-gray-600">{s.name}</span>
@@ -701,12 +638,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             )}
 
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
-
-            {stateOpen && !loading && (
-              <div className="mt-1 text-[11px] text-gray-500">
-                Tip: use ↑ ↓ then Enter to select. Esc to close.
-              </div>
-            )}
           </div>
 
           {/* CITY SECOND */}
@@ -739,24 +670,39 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                   <div className="h-px bg-gray-200" />
 
                   {cityLoading ? (
-                    <div className="px-3 py-2 text-sm text-gray-600">Searching…</div>
+                    <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. You can keep typing.' : 'Start typing to see suggestions.'}
+                      {cityInput.trim().length
+                        ? 'No matches. You can keep typing.'
+                        : 'No cities loaded yet.'}
                     </div>
                   ) : (
-                    citySuggestions.slice(0, 10).map((name, idx) => (
-                      <button
-                        key={name}
-                        type="button"
-                        data-city-idx={idx}
-                        onMouseEnter={() => setCityActiveIndex(idx)}
-                        onClick={() => pickCitySuggestion(name)}
-                        className={cityItemClass(cityActiveIndex === idx)}
-                      >
-                        {name}
-                      </button>
-                    ))
+                    <>
+                      {citySuggestions.map((name, idx) => (
+                        <button
+                          key={name}
+                          type="button"
+                          data-city-idx={idx}
+                          onMouseEnter={() => setCityActiveIndex(idx)}
+                          onClick={() => pickCitySuggestion(name)}
+                          className={cityItemClass(cityActiveIndex === idx)}
+                        >
+                          {name}
+                        </button>
+                      ))}
+
+                      {/* Browse mode: allow loading more */}
+                      {isBrowsingCities && (
+                        <button
+                          type="button"
+                          onClick={() => setCityLimit((p) => Math.min(p + 100, 2000))}
+                          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Load more cities…
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -781,7 +727,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
               <div className="mt-1 text-[11px] text-gray-500">
-                Tip: use ↑ ↓ then Enter to select. Esc to close.
+                {cityInput.trim().length === 0
+                  ? 'Browse the list or start typing to filter.'
+                  : 'Tip: use ↑ ↓ then Enter to select. Esc to close.'}
               </div>
             )}
           </div>
