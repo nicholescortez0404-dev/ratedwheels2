@@ -138,11 +138,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // City mismatch flow:
-  // - only show panel after blur OR submit attempt
+  // ---- City issue flow (THIS is the new, fixed UI) ----
+  // We only show the banner after blur or submit attempt, and it collapses once user decides.
+  type CityIssue = null | { type: 'not_found' }
+  const [cityIssue, setCityIssue] = useState<CityIssue>(null)
+  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(null)
+
+  // City mismatch gating helpers
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
-  const [forceSubmit, setForceSubmit] = useState(false)
 
   const commentCount = comment.length
   const overLimit = commentCount > MAX_COMMENT_CHARS
@@ -156,16 +160,24 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     cityNotListed ||
     citySuggestions.some((c) => c.trim().toLowerCase() === normalizedCityInput)
 
-  // IMPORTANT: never show the panel while dropdown is open (prevents overlap/covering)
-  const showCityMismatchPanel =
+  const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
+
+  // Show banner only when:
+  // - state picked
+  // - user typed something
+  // - city is NOT valid
+  // - dropdown is closed (prevents overlap)
+  // - user has blurred or attempted submit
+  // - user has NOT already made a decision
+  const showCityBanner =
     statePicked &&
     !loading &&
     !cityNotListed &&
     normalizedCityInput.length > 0 &&
     !cityLooksValid &&
-    !forceSubmit &&
     !cityOpen &&
-    (cityTouched || submitAttempted)
+    (cityTouched || submitAttempted) &&
+    !cityDecision
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -272,9 +284,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
     setCityLimit(50)
+
+    // reset city issue flow
     setCityTouched(false)
     setSubmitAttempted(false)
-    setForceSubmit(false)
+    setCityIssue(null)
+    setCityDecision(null)
   }
 
   function pickState(code: string) {
@@ -302,7 +317,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
     setStateInput(cleaned)
     setStateOpen(true)
-    setForceSubmit(false)
 
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
@@ -312,8 +326,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       resetCity()
     }
   }
-
-  const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
   // Fetch city suggestions
   useEffect(() => {
@@ -366,6 +378,25 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityOpen && statePicked && !loading) setCityActiveIndex(-1)
   }, [cityOpen, statePicked, loading])
 
+  // Whenever the city becomes valid (or cleared), auto-clear any lingering issue/decision
+  useEffect(() => {
+    if (!statePicked) return
+    const typed = cityInput.trim().length > 0 && !cityNotListed
+    if (!typed) {
+      setCityIssue(null)
+      setCityDecision(null)
+      return
+    }
+    if (cityLooksValid) {
+      setCityIssue(null)
+      setCityDecision(null)
+      return
+    }
+
+    // mark issue (but banner shows only if blur/submit attempt + dropdown closed)
+    setCityIssue({ type: 'not_found' })
+  }, [statePicked, cityInput, cityNotListed, cityLooksValid])
+
   function onCityFocus() {
     if (!statePicked) return
     setCityOpen(true)
@@ -375,8 +406,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityInput(v)
     setCityValue(v.trim() ? v : null)
     setCityNotListed(false)
-    setForceSubmit(false)
+
+    // if they start typing again, reopen flow
+    setCityIssue(null)
+    setCityDecision(null)
     setSubmitAttempted(false)
+
     if (statePicked) setCityOpen(true)
   }
 
@@ -386,9 +421,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityNotListed(false)
     setCityOpen(false)
     setCityActiveIndex(-1)
-    setForceSubmit(false)
+
+    // resolved
     setCityTouched(false)
     setSubmitAttempted(false)
+    setCityIssue(null)
+    setCityDecision(null)
   }
 
   function chooseNotListed() {
@@ -397,9 +435,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityNotListed(true)
     setCityOpen(false)
     setCityActiveIndex(-1)
-    setForceSubmit(false)
+
+    // resolved (user chose leave blank)
     setCityTouched(false)
     setSubmitAttempted(false)
+    setCityIssue(null)
+    setCityDecision('leave_blank')
   }
 
   function scrollActiveCityIntoView(nextIdx: number) {
@@ -448,6 +489,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       if (cityLoading) return
 
       if (cityActiveIndex === -1) {
+        // user selects "City not listed" from menu
         chooseNotListed()
         return
       }
@@ -456,6 +498,26 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       if (picked) pickCitySuggestion(picked)
       return
     }
+  }
+
+  // ---- THE NEW: Banner actions ----
+  function onCityEnterAnyway() {
+    setCityDecision('enter_anyway')
+    setCityIssue(null)
+    setError(null)
+  }
+
+  function onCityPickFromList() {
+    setCityDecision('picked_from_list') // collapses banner
+    setCityIssue(null)
+    setCityTouched(false)
+    setSubmitAttempted(false)
+    setCityOpen(true)
+    setTimeout(() => cityInputRef.current?.focus(), 0)
+  }
+
+  function onCityLeaveBlank() {
+    chooseNotListed()
   }
 
   async function createDriver(): Promise<InsertedDriver> {
@@ -467,7 +529,19 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       )
     }
 
-    const cityToSave = cityNotListed ? null : cityValue?.trim() ? cityValue.trim() : null
+    // If user chose "Enter anyway" we allow any typed city; otherwise only save if valid.
+    const typed = cityInput.trim()
+    const allowAny = cityDecision === 'enter_anyway'
+
+    const cityToSave = cityNotListed
+      ? null
+      : !typed
+        ? null
+        : allowAny
+          ? typed
+          : cityLooksValid
+            ? (cityValue?.trim() || typed)
+            : null
 
     const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
@@ -486,14 +560,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   function cityGatePasses(): boolean {
     if (!statePicked) return true
+    if (cityNotListed) return true
 
-    const hasTypedCity = cityInput.trim().length > 0 && !cityNotListed
-    if (!hasTypedCity) return true
+    const typed = cityInput.trim().length > 0
+    if (!typed) return true
 
+    // valid -> fine
     if (cityLooksValid) return true
-    if (forceSubmit) return true
 
-    // Block submit and show panel AFTER dropdown closes
+    // decision already made -> allow only if "enter anyway"
+    if (cityDecision === 'enter_anyway') return true
+
+    // otherwise block and show banner (after dropdown closes)
     setSubmitAttempted(true)
     setCityOpen(false)
     return false
@@ -725,9 +803,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                   onClick={() => {
                     setCityNotListed(false)
                     setCityOpen(true)
-                    setForceSubmit(false)
                     setCityTouched(false)
                     setSubmitAttempted(false)
+                    setCityIssue(null)
+                    setCityDecision(null)
                     setTimeout(() => cityInputRef.current?.focus(), 0)
                   }}
                 >
@@ -746,52 +825,48 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           </div>
         </div>
 
-        {/* MISMATCH PANEL: rendered OUTSIDE the dropdown area + only when cityOpen is false */}
-        {showCityMismatchPanel && (
-          <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-gray-900">
-            <div className="flex items-start justify-between gap-3">
-              <div>
+        {/* ✅ NEW COLLAPSING BANNER (replaces the old mismatch panel UI) */}
+        <div
+          className={[
+            'overflow-hidden transition-all duration-200',
+            showCityBanner ? 'max-h-40 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0',
+          ].join(' ')}
+        >
+          {showCityBanner && (
+            <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3">
+              <div className="text-sm text-yellow-900">
                 <div className="font-medium">City not found for {state}.</div>
-                <div className="text-gray-700">Submit anyway?</div>
+                <div className="opacity-80">How do you want to proceed?</div>
               </div>
 
-              <div className="flex shrink-0 gap-2">
+              <div className="flex gap-2 shrink-0">
                 <button
                   type="button"
-                  className="rounded-md bg-black px-3 py-2 text-xs font-semibold text-white"
-                  onClick={() => {
-                    setForceSubmit(true)
-                    setError(null)
-                  }}
+                  className="px-3 py-2 rounded-md bg-black text-white text-sm"
+                  onClick={onCityEnterAnyway}
                 >
-                  Submit anyway
+                  Enter anyway
                 </button>
 
                 <button
                   type="button"
-                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
-                  onClick={() => {
-                    setCityTouched(false)
-                    setSubmitAttempted(false)
-                    setForceSubmit(false)
-                    setCityOpen(true)
-                    setTimeout(() => cityInputRef.current?.focus(), 0)
-                  }}
+                  className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
+                  onClick={onCityPickFromList}
                 >
                   Pick from list
                 </button>
 
                 <button
                   type="button"
-                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
-                  onClick={chooseNotListed}
+                  className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
+                  onClick={onCityLeaveBlank}
                 >
                   Leave blank
                 </button>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Review fields */}
