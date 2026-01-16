@@ -140,7 +140,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // City mismatch confirmation
+  // City mismatch UX:
+  // - show only after blur OR submit attempt
+  const [cityTouched, setCityTouched] = useState(false)
   const [forceSubmit, setForceSubmit] = useState(false)
 
   const commentCount = comment.length
@@ -155,13 +157,16 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     cityNotListed ||
     citySuggestions.some((c) => c.trim().toLowerCase() === normalizedCityInput)
 
-  const showCityMismatchWarning =
+  // Don’t show the “submit anyway?” panel while dropdown is open (avoids clutter)
+  const shouldOfferBypass =
     statePicked &&
     !loading &&
     !cityNotListed &&
     normalizedCityInput.length > 0 &&
     !cityLooksValid &&
-    !forceSubmit
+    !forceSubmit &&
+    cityTouched &&
+    !cityOpen
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -268,6 +273,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
     setCityLimit(50)
+    setCityTouched(false)
     setForceSubmit(false)
   }
 
@@ -311,8 +317,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
   // Fetch city suggestions:
-  // - If cityInput has text => search suggestions
-  // - If cityInput empty AND dropdown open => browse list (alphabetical) for that state
   useEffect(() => {
     if (!statePicked) {
       setCitySuggestions([])
@@ -384,6 +388,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
     setForceSubmit(false)
+    setCityTouched(false) // resolved
   }
 
   function chooseNotListed() {
@@ -393,6 +398,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityOpen(false)
     setCityActiveIndex(-1)
     setForceSubmit(false)
+    setCityTouched(false)
   }
 
   function scrollActiveCityIntoView(nextIdx: number) {
@@ -460,7 +466,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       )
     }
 
-    // Allow anything IF user confirmed mismatch. Otherwise prefer blank if not listed / empty.
+    // If user clicked "submit anyway", allow saving the typed city even if it isn’t in list.
+    // Otherwise if it’s invalid, caller will block + show bypass UI.
     const cityToSave = cityNotListed ? null : cityValue?.trim() ? cityValue.trim() : null
 
     const { data: inserted, error: insertErr } = await supabase
@@ -478,14 +485,25 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return inserted as InsertedDriver
   }
 
+  function ensureCityGateOrReturn(): boolean {
+    if (!statePicked) return true // other validation handles it
+
+    const hasTypedCity = cityInput.trim().length > 0 && !cityNotListed
+    if (!hasTypedCity) return true
+
+    if (cityLooksValid) return true
+
+    if (forceSubmit) return true
+
+    // block + show the inline bypass (after blur/submit)
+    setCityTouched(true)
+    setCityOpen(false)
+    return false
+  }
+
   async function onCreateOnly() {
     if (loading) return
-
-    // Same mismatch gating for "create only"
-    if (!cityLooksValid && !forceSubmit && cityInput.trim().length > 0 && !cityNotListed) {
-      setError(`City not found for ${state}. Submit anyway?`)
-      return
-    }
+    if (!ensureCityGateOrReturn()) return
 
     setLoading(true)
     setError(null)
@@ -511,11 +529,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       return
     }
 
-    // Mismatch gating
-    if (!cityLooksValid && !forceSubmit && cityInput.trim().length > 0 && !cityNotListed) {
-      setError(`City not found for ${state}. Submit anyway?`)
-      return
-    }
+    if (!ensureCityGateOrReturn()) return
 
     setLoading(true)
     setError(null)
@@ -640,6 +654,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               value={cityInput}
               onChange={(e) => onCityChange(e.target.value)}
               onFocus={onCityFocus}
+              onBlur={() => {
+                // Only mark "touched" if they actually typed something and didn’t pick "not listed"
+                if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
+              }}
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
@@ -669,7 +687,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. You can keep typing.' : 'No cities loaded yet.'}
+                      {cityInput.trim().length
+                        ? 'No matches. You can keep typing.'
+                        : 'No cities loaded yet.'}
                     </div>
                   ) : (
                     <>
@@ -701,6 +721,52 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               </div>
             )}
 
+            {/* Compact inline mismatch (under city input) */}
+            {shouldOfferBypass && (
+              <div className="mt-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-gray-900">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-medium">City not found for {state}.</div>
+                    <div className="text-gray-700">Submit anyway?</div>
+                  </div>
+
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md bg-black px-3 py-2 text-xs font-semibold text-white"
+                      onClick={() => {
+                        setForceSubmit(true)
+                        setError(null)
+                      }}
+                    >
+                      Submit anyway
+                    </button>
+
+                    <button
+                      type="button"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
+                      onClick={() => {
+                        setCityTouched(false)
+                        setForceSubmit(false)
+                        setCityOpen(true)
+                        setTimeout(() => cityInputRef.current?.focus(), 0)
+                      }}
+                    >
+                      Pick from list
+                    </button>
+
+                    <button
+                      type="button"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
+                      onClick={chooseNotListed}
+                    >
+                      Leave blank
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {statePicked && cityNotListed && (
               <div className="mt-1 text-xs text-gray-600">
                 City will be left blank.
@@ -711,6 +777,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     setCityNotListed(false)
                     setCityOpen(true)
                     setForceSubmit(false)
+                    setCityTouched(false)
                     setTimeout(() => cityInputRef.current?.focus(), 0)
                   }}
                 >
@@ -729,50 +796,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           </div>
         </div>
       </div>
-
-      {/* City mismatch warning + confirm */}
-      {showCityMismatchWarning && (
-        <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-gray-900">
-          <div className="font-medium">City not found for {state}.</div>
-          <div className="text-gray-700">Submit anyway?</div>
-
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              className="rounded-md bg-black px-3 py-2 text-xs font-semibold text-white"
-              onClick={() => {
-                setForceSubmit(true)
-                setError(null)
-              }}
-            >
-              Yes, submit anyway
-            </button>
-
-            <button
-              type="button"
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
-              onClick={() => {
-                setCityInput('')
-                setCityValue(null)
-                setCityOpen(true)
-                setError(null)
-                setForceSubmit(false)
-                setTimeout(() => cityInputRef.current?.focus(), 0)
-              }}
-            >
-              Pick from list
-            </button>
-
-            <button
-              type="button"
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
-              onClick={chooseNotListed}
-            >
-              Leave blank
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Review fields */}
       <div className="space-y-4 pt-2">
@@ -806,7 +829,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onChange={(e) => {
                 const v = e.target.value
                 setComment(v)
-                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) setError(null)
+                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment'))
+                  setError(null)
               }}
               placeholder="Write what happened…"
               rows={3}
@@ -868,7 +892,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           onClick={onCreateOnly}
           disabled={disableCreateOnly}
           className="text-xs text-gray-600 underline underline-offset-2 hover:text-gray-900 disabled:opacity-60 disabled:cursor-not-allowed"
-          title={!statePicked ? 'Pick a state to continue' : !handleValid ? 'Driver handle format invalid' : undefined}
+          title={
+            !statePicked ? 'Pick a state to continue' : !handleValid ? 'Driver handle format invalid' : undefined
+          }
         >
           Create driver only
         </button>
