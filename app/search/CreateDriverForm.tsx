@@ -128,6 +128,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const cityFetchId = useRef(0)
   const [cityActiveIndex, setCityActiveIndex] = useState<number>(-1)
 
+  // prevents fetch effect from re-opening dropdown after we intentionally closed it
+  const suppressCityOpenRef = useRef(false)
+
   // review fields
   const [stars, setStars] = useState<number>(5)
   const [comment, setComment] = useState<string>('')
@@ -163,7 +166,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   // Banner: show on blur/submit OR immediately when we know there are no matches
   const typedCity = cityInput.trim().length > 0
-
   const noCityMatches =
     statePicked && cityOpen && !cityLoading && !cityNotListed && typedCity && citySuggestions.length === 0
 
@@ -189,6 +191,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setSubmitAttempted(false)
     setCityIssue(null)
     setCityDecision(null)
+
+    suppressCityOpenRef.current = false
   }
 
   function markCityNeedsDecision() {
@@ -213,6 +217,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
       if (cityBoxRef.current && !cityBoxRef.current.contains(target)) {
         if (cityOpen) {
+          suppressCityOpenRef.current = true
           setCityOpen(false)
           setCityActiveIndex(-1)
           markCityNeedsDecision()
@@ -356,6 +361,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
     if (cityNotListed) return
 
+    // if we intentionally closed it, do not fetch (prevents re-open)
+    if (suppressCityOpenRef.current && !cityOpen) return
+
     const q = cityInput.trim()
     const shouldFetchBrowse = cityOpen && q.length === 0
     const shouldFetchSearch = q.length > 0
@@ -385,16 +393,19 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const uniq = Array.from(new Set(names))
       setCitySuggestions(uniq)
       setCityLoading(false)
-      setCityOpen(true)
+
+      if (suppressCityOpenRef.current) {
+        suppressCityOpenRef.current = false
+        setCityOpen(false)
+      } else {
+        setCityOpen(true)
+      }
+
       setCityActiveIndex(-1)
     }, shouldFetchSearch ? 150 : 0)
 
     return () => clearTimeout(t)
   }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
-
-  useEffect(() => {
-    if (cityOpen && statePicked && !loading) setCityActiveIndex(-1)
-  }, [cityOpen, statePicked, loading])
 
   // Keep issue state in sync (banner itself is controlled by showCityBanner)
   useEffect(() => {
@@ -411,6 +422,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   function onCityFocus() {
     if (!statePicked) return
+    suppressCityOpenRef.current = false
     setCityOpen(true)
   }
 
@@ -425,10 +437,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setSubmitAttempted(false)
     setCityTouched(false)
 
+    suppressCityOpenRef.current = false
     if (statePicked) setCityOpen(true)
   }
 
   function pickCitySuggestion(name: string) {
+    suppressCityOpenRef.current = true
+
     setCityInput(name)
     setCityValue(name)
     setCityNotListed(false)
@@ -442,6 +457,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   }
 
   function chooseNotListed() {
+    suppressCityOpenRef.current = true
+
     setCityInput('')
     setCityValue(null)
     setCityNotListed(true)
@@ -462,8 +479,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   // Banner actions
   function onCityEnterAnyway() {
+    suppressCityOpenRef.current = true
+
     const typed = cityInput.trim()
     if (typed) setCityValue(typed)
+
+    setCityOpen(false)
+    setCityActiveIndex(-1)
 
     setCityDecision('enter_anyway')
     setCityIssue(null)
@@ -477,6 +499,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityIssue(null)
     setCityTouched(false)
     setSubmitAttempted(false)
+
+    suppressCityOpenRef.current = false
     setCityOpen(true)
     setTimeout(() => cityInputRef.current?.focus(), 0)
   }
@@ -492,9 +516,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const anyResults = citySuggestions.length > 0
     const maxIdx = anyResults ? citySuggestions.length - 1 : -1
 
-    // TAB: close menu and trigger banner if invalid
+    // TAB: close menu and trigger banner if invalid (don't prevent default)
     if (e.key === 'Tab') {
       if (cityOpen) {
+        suppressCityOpenRef.current = true
         setCityOpen(false)
         setCityActiveIndex(-1)
       }
@@ -506,6 +531,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (e.key === 'Escape') {
       if (cityOpen) {
         e.preventDefault()
+        suppressCityOpenRef.current = true
         setCityOpen(false)
         setCityActiveIndex(-1)
         markCityNeedsDecision()
@@ -517,6 +543,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       e.preventDefault()
 
       if (!hasMenu) {
+        suppressCityOpenRef.current = false
         setCityOpen(true)
         setCityActiveIndex(-1)
         return
@@ -535,7 +562,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (e.key === 'Enter') {
       const typed = cityInput.trim().length > 0
 
-      // Enter should behave like "Enter anyway" ONLY when there are 0 matches
+      // Enter = "Enter anyway" ONLY when there are 0 matches
       const shouldEnterAnyway =
         typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
 
@@ -547,7 +574,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         return
       }
 
-      // If the menu is open, Enter should not submit the form
+      // If menu open, Enter should not submit the form
       if (hasMenu) {
         e.preventDefault()
         if (cityLoading) return
@@ -558,14 +585,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           return
         }
 
+        suppressCityOpenRef.current = true
         setCityOpen(false)
         setCityActiveIndex(-1)
-
-        // Edge-case safety: if menu open but truly no matches, Enter = enter anyway
-        if (typed && !cityNotListed && !cityDecision && citySuggestions.length === 0) {
-          onCityEnterAnyway()
-        }
-
         return
       }
 
@@ -622,6 +644,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityDecision === 'enter_anyway') return true
 
     // block submit and show banner
+    suppressCityOpenRef.current = true
     setCityOpen(false)
     setCityActiveIndex(-1)
     setCityTouched(true)
@@ -791,6 +814,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onBlur={() => {
                 if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
                 if (cityOpen) {
+                  suppressCityOpenRef.current = true
                   setCityOpen(false)
                   setCityActiveIndex(-1)
                 }
@@ -861,6 +885,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                   className="ml-2 underline underline-offset-2 hover:text-gray-900"
                   onClick={() => {
                     setCityNotListed(false)
+                    suppressCityOpenRef.current = false
                     setCityOpen(true)
                     setCityTouched(false)
                     setSubmitAttempted(false)
@@ -991,7 +1016,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             </p>
           )}
 
-          <p className="text-xs text-gray-600">Note: some language may be automatically censored. Hate speech/slurs are not allowed.</p>
+          <p className="text-xs text-gray-600">
+            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
+          </p>
         </div>
       </div>
 
