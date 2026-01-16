@@ -128,6 +128,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const cityFetchId = useRef(0)
   const [cityActiveIndex, setCityActiveIndex] = useState<number>(-1)
 
+  // ✅ banner ref so clicking banner buttons doesn't get treated as "outside click"
+  const cityBannerRef = useRef<HTMLDivElement | null>(null)
+
   // prevents fetch effect from re-opening dropdown after we intentionally closed it
   const suppressCityOpenRef = useRef(false)
 
@@ -144,9 +147,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   // ---- City issue flow (push-down UI) ----
   type CityIssue = null | { type: 'not_found' }
   const [cityIssue, setCityIssue] = useState<CityIssue>(null)
-  const [cityDecision, setCityDecision] = useState<
-    null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'
-  >(null)
+  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(
+    null
+  )
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
@@ -209,14 +212,19 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setSubmitAttempted(true)
   }
 
-  // Close dropdowns on outside click
+  // Close dropdowns on outside click (✅ banner clicks are NOT outside)
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       const target = e.target as Node
+
       if (stateBoxRef.current && !stateBoxRef.current.contains(target)) setStateOpen(false)
 
-      if (cityBoxRef.current && !cityBoxRef.current.contains(target)) {
-        if (cityOpen) {
+      if (cityOpen) {
+        const clickedInsideCity =
+          (cityBoxRef.current && cityBoxRef.current.contains(target)) ||
+          (cityBannerRef.current && cityBannerRef.current.contains(target))
+
+        if (!clickedInsideCity) {
           suppressCityOpenRef.current = true
           setCityOpen(false)
           setCityActiveIndex(-1)
@@ -224,6 +232,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         }
       }
     }
+
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -563,8 +572,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const typed = cityInput.trim().length > 0
 
       // Enter = "Enter anyway" ONLY when there are 0 matches
-      const shouldEnterAnyway =
-        typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
+      const shouldEnterAnyway = typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
 
       if (shouldEnterAnyway) {
         e.preventDefault()
@@ -742,8 +750,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
       <p className="text-gray-900">
-        We couldn’t find this driver yet. Be the first to create and review{' '}
-        <span className="font-semibold">@{handle}</span>.
+        We couldn’t find this driver yet. Be the first to create and review <span className="font-semibold">@{handle}</span>.
       </p>
 
       {!handleValid && (
@@ -911,13 +918,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
         {/* PUSH-DOWN BANNER */}
         <div
+          ref={cityBannerRef}
           className={[
             'overflow-hidden transition-all duration-200',
             showCityBanner ? 'max-h-40 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0',
           ].join(' ')}
         >
           {showCityBanner && (
-            <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3">
+            <div
+              className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3"
+              // ✅ extra safety so doc mousedown can't eat the click
+              onMouseDown={(e) => e.stopPropagation()}
+            >
               <div className="text-sm text-yellow-900">
                 <div className="font-medium">City not found for {state}.</div>
                 <div className="opacity-80">How do you want to proceed?</div>
@@ -1011,8 +1023,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to{' '}
-              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
+              continue.
             </p>
           )}
 
