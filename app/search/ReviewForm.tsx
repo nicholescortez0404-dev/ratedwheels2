@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -12,12 +12,13 @@ type TagRow = {
   is_active?: boolean
 }
 
+const MAX_COMMENT_CHARS = 500
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
 async function scrollToReviewId(reviewId: string) {
-  // Try for ~2 seconds to find the element (covers refresh/render timing)
   const targetId = `review-${reviewId}`
   const started = Date.now()
 
@@ -35,18 +36,21 @@ async function scrollToReviewId(reviewId: string) {
 export default function ReviewForm({ driverId }: { driverId: string }) {
   const router = useRouter()
 
-  const [stars, setStars] = useState(5)
-  const [comment, setComment] = useState('')
+  const [stars, setStars] = useState<number>(5)
+  const [comment, setComment] = useState<string>('')
 
   const [tags, setTags] = useState<TagRow[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
 
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
-
   const [toast, setToast] = useState<string | null>(null)
 
-  // Load tag options (safe to keep client-side)
+  // derived
+  const commentCount = comment.length
+  const overLimit = commentCount > MAX_COMMENT_CHARS
+
+  // Load tag options (safe client-side)
   useEffect(() => {
     let mounted = true
 
@@ -73,7 +77,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
   }, [])
 
-  // After a refresh, check if we have a "last posted review" to scroll to.
+  // After refresh: scroll to last posted review
   useEffect(() => {
     const last = sessionStorage.getItem('rw:lastPostedReviewId')
     if (!last) return
@@ -138,8 +142,15 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
   }
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+
+    // Option A enforcement: if over limit, do not submit.
+    if (overLimit) {
+      setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
+      return
+    }
+
     setLoading(true)
     setError(null)
 
@@ -185,7 +196,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
       // Refresh server data
       router.refresh()
 
-      // (Optional) If refresh is fast, we can attempt a scroll right away too
+      // Optional: attempt immediate scroll too
       if (newReviewId) {
         scrollToReviewId(newReviewId)
       }
@@ -200,9 +211,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
 
     return (
       <div className="space-y-2">
-        <div className="text-xs tracking-widest text-gray-600 uppercase">
-          {title}
-        </div>
+        <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
 
         <div className="flex flex-wrap gap-2">
           {list.map((t) => {
@@ -255,24 +264,59 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
           <TagGroup title="Positive" list={grouped.positive ?? []} />
         </div>
 
-        <textarea
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Write what happened…"
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-black/20"
-          rows={3}
-        />
+        {/* Comment box with RMP-style counter + red state when over */}
+        <div className="space-y-2">
+          <div className="relative">
+            <textarea
+              value={comment}
+              onChange={(e) => {
+                const v = e.target.value
+                setComment(v)
+                // If user trims back under the limit, clear the "trim to submit" error automatically
+                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) {
+                  setError(null)
+                }
+              }}
+              placeholder="Write what happened…"
+              rows={3}
+              className={[
+                'w-full rounded-md border bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 outline-none transition',
+                overLimit
+                  ? 'border-red-500 ring-1 ring-red-500 focus:ring-2 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-2 focus:ring-black/20',
+              ].join(' ')}
+            />
 
-        <p className="text-xs text-gray-600">
-          Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-        </p>
+            <div
+              className={[
+                'absolute bottom-2 right-3 text-xs tabular-nums',
+                overLimit ? 'text-red-600' : 'text-gray-600',
+              ].join(' ')}
+            >
+              {commentCount}/{MAX_COMMENT_CHARS}
+            </div>
+          </div>
+
+          {/* Only show this guidance when over the limit */}
+          {overLimit && (
+            <p className="text-sm text-red-600">
+              Your comment is too long. Please shorten it to{' '}
+              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+            </p>
+          )}
+
+          <p className="text-xs text-gray-600">
+            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
+          </p>
+        </div>
 
         {error && <p className="text-red-600">{error}</p>}
 
         <button
           type="submit"
-          disabled={loading}
-          className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition disabled:opacity-60"
+          disabled={loading || overLimit}
+          className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          title={overLimit ? `Shorten comment to ${MAX_COMMENT_CHARS} chars to submit` : undefined}
         >
           {loading ? 'Posting…' : 'Post review'}
         </button>
