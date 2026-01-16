@@ -128,7 +128,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const cityFetchId = useRef(0)
   const [cityActiveIndex, setCityActiveIndex] = useState<number>(-1)
 
-  // ✅ banner ref so clicking banner buttons doesn't get treated as "outside click"
+  // ✅ Banner ref (so outside-click logic doesn't treat it as outside)
   const cityBannerRef = useRef<HTMLDivElement | null>(null)
 
   // prevents fetch effect from re-opening dropdown after we intentionally closed it
@@ -212,12 +212,14 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setSubmitAttempted(true)
   }
 
-  // Close dropdowns on outside click (✅ banner clicks are NOT outside)
+  // ✅ Close dropdowns on outside click (but treat banner clicks as inside)
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       const target = e.target as Node
 
-      if (stateBoxRef.current && !stateBoxRef.current.contains(target)) setStateOpen(false)
+      if (stateBoxRef.current && !stateBoxRef.current.contains(target)) {
+        setStateOpen(false)
+      }
 
       if (cityOpen) {
         const clickedInsideCity =
@@ -309,12 +311,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           {list.map((t) => {
             const selected = selectedTagIds.has(t.id)
             return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => toggleTag(t.id)}
-                className={chipClass(t.category, selected)}
-              >
+              <button key={t.id} type="button" onClick={() => toggleTag(t.id)} className={chipClass(t.category, selected)}>
                 {t.label}
               </button>
             )
@@ -750,7 +747,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
       <p className="text-gray-900">
-        We couldn’t find this driver yet. Be the first to create and review <span className="font-semibold">@{handle}</span>.
+        We couldn’t find this driver yet. Be the first to create and review{' '}
+        <span className="font-semibold">@{handle}</span>.
       </p>
 
       {!handleValid && (
@@ -927,8 +925,11 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           {showCityBanner && (
             <div
               className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex items-center justify-between gap-3"
-              // ✅ extra safety so doc mousedown can't eat the click
-              onMouseDown={(e) => e.stopPropagation()}
+              // ✅ THE REAL FIX: prevents input blur from eating the first click
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
             >
               <div className="text-sm text-yellow-900">
                 <div className="font-medium">City not found for {state}.</div>
@@ -1023,8 +1024,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
-              continue.
+              Your comment is too long. Please shorten it to{' '}
+              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 
