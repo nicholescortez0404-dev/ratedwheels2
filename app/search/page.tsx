@@ -101,8 +101,7 @@ export default async function SearchPage({
       } else if (sortMode === 'oldest') {
         rq = rq.order('created_at', { ascending: true })
       } else {
-        // newest
-        rq = rq.order('created_at', { ascending: false })
+        rq = rq.order('created_at', { ascending: false }) // newest
       }
 
       const { data: r, error: reviewsErr } = await rq
@@ -166,9 +165,6 @@ export default async function SearchPage({
       {/* RESULTS */}
       {!q ? null : !driver ? (
         <div className="mt-8 rounded-lg border border-gray-300 p-4">
-          <p className="text-gray-900">
-            No driver found. Create <span className="font-semibold">@{q}</span>?
-          </p>
           <CreateDriverForm initialRaw={raw} />
         </div>
       ) : (
