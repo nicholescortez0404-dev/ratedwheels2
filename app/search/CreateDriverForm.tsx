@@ -141,7 +141,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   // ---- City issue flow (push-down UI) ----
   type CityIssue = null | { type: 'not_found' }
   const [cityIssue, setCityIssue] = useState<CityIssue>(null)
-  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(null)
+  const [cityDecision, setCityDecision] = useState<
+    null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'
+  >(null)
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
@@ -159,16 +161,20 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   const isBrowsingCities = statePicked && !cityNotListed && cityOpen && cityInput.trim().length === 0
 
-  // Banner appears ONLY when dropdown is closed and city is invalid, after blur/tab/click-away/submit attempt
+  // Banner: show on blur/submit OR immediately when we know there are no matches
+  const typedCity = cityInput.trim().length > 0
+
+  const noCityMatches =
+    statePicked && cityOpen && !cityLoading && !cityNotListed && typedCity && citySuggestions.length === 0
+
   const showCityBanner =
     statePicked &&
     !loading &&
     !cityNotListed &&
-    normalizedCityInput.length > 0 &&
+    typedCity &&
     !cityLooksValid &&
-    !cityOpen &&
-    (cityTouched || submitAttempted) &&
-    !cityDecision
+    !cityDecision &&
+    (cityTouched || submitAttempted || noCityMatches)
 
   function resetCity() {
     setCityInput('')
@@ -186,9 +192,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   }
 
   function markCityNeedsDecision() {
-    // only if there’s typed invalid city and they haven’t decided yet
     if (!statePicked) return
     if (cityNotListed) return
+    if (cityLoading) return
+
     const typed = cityInput.trim().length > 0
     if (!typed) return
     if (cityLooksValid) return
@@ -208,7 +215,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         if (cityOpen) {
           setCityOpen(false)
           setCityActiveIndex(-1)
-          // if they click away with invalid city, show banner
           markCityNeedsDecision()
         }
       }
@@ -216,7 +222,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cityOpen, statePicked, cityInput, cityNotListed, cityLooksValid, cityDecision])
+  }, [cityOpen, statePicked, cityInput, cityNotListed, cityLooksValid, cityDecision, cityLoading])
 
   // Load tag options
   useEffect(() => {
@@ -390,20 +396,16 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityOpen && statePicked && !loading) setCityActiveIndex(-1)
   }, [cityOpen, statePicked, loading])
 
-  // Update issue state (banner still depends on blur/submit attempt)
+  // Keep issue state in sync (banner itself is controlled by showCityBanner)
   useEffect(() => {
     if (!statePicked) return
+
     const typed = cityInput.trim().length > 0 && !cityNotListed
-    if (!typed) {
+    if (!typed || cityLooksValid) {
       setCityIssue(null)
-      setCityDecision(null)
       return
     }
-    if (cityLooksValid) {
-      setCityIssue(null)
-      setCityDecision(null)
-      return
-    }
+
     setCityIssue({ type: 'not_found' })
   }, [statePicked, cityInput, cityNotListed, cityLooksValid])
 
@@ -417,7 +419,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityValue(v.trim() ? v : null)
     setCityNotListed(false)
 
-    // typing again resets decision and banner triggers
+    // typing resets decision and banner triggers
     setCityIssue(null)
     setCityDecision(null)
     setSubmitAttempted(false)
@@ -460,6 +462,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   // Banner actions
   function onCityEnterAnyway() {
+    const typed = cityInput.trim()
+    if (typed) setCityValue(typed)
+
     setCityDecision('enter_anyway')
     setCityIssue(null)
     setError(null)
@@ -468,7 +473,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   }
 
   function onCityPickFromList() {
-    setCityDecision('picked_from_list') // collapses banner
+    setCityDecision('picked_from_list')
     setCityIssue(null)
     setCityTouched(false)
     setSubmitAttempted(false)
@@ -487,15 +492,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const anyResults = citySuggestions.length > 0
     const maxIdx = anyResults ? citySuggestions.length - 1 : -1
 
-    // TAB: close menu and trigger banner if invalid (don’t prevent default so focus moves)
+    // TAB: close menu and trigger banner if invalid
     if (e.key === 'Tab') {
       if (cityOpen) {
         setCityOpen(false)
         setCityActiveIndex(-1)
       }
-      // treat tabbing out as "touched"
       if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
-      // if invalid, show banner
       markCityNeedsDecision()
       return
     }
@@ -505,7 +508,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         e.preventDefault()
         setCityOpen(false)
         setCityActiveIndex(-1)
-        // if invalid, show banner
         markCityNeedsDecision()
       }
       return
@@ -513,6 +515,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
+
       if (!hasMenu) {
         setCityOpen(true)
         setCityActiveIndex(-1)
@@ -530,9 +533,21 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
 
     if (e.key === 'Enter') {
-      // If menu is open:
-      // - Enter selects highlighted city if one is highlighted
-      // - Otherwise Enter behaves like "Enter anyway" (your request)
+      const typed = cityInput.trim().length > 0
+
+      // Enter should behave like "Enter anyway" ONLY when there are 0 matches
+      const shouldEnterAnyway =
+        typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
+
+      if (shouldEnterAnyway) {
+        e.preventDefault()
+        setCityOpen(false)
+        setCityActiveIndex(-1)
+        onCityEnterAnyway()
+        return
+      }
+
+      // If the menu is open, Enter should not submit the form
       if (hasMenu) {
         e.preventDefault()
         if (cityLoading) return
@@ -543,17 +558,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           return
         }
 
-        // nothing highlighted → treat as "Enter anyway" if invalid
         setCityOpen(false)
         setCityActiveIndex(-1)
 
-        if (cityInput.trim().length > 0 && !cityLooksValid) {
+        // Edge-case safety: if menu open but truly no matches, Enter = enter anyway
+        if (typed && !cityNotListed && !cityDecision && citySuggestions.length === 0) {
           onCityEnterAnyway()
         }
+
         return
       }
 
-      // If menu is closed, allow normal form submit behavior
+      // otherwise allow normal submit
       return
     }
   }
@@ -690,8 +706,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   // CITY dropdown pushes down
-  const cityDropdownClass =
-    'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+  const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const dropdownScrollClass = 'max-h-56 overflow-auto'
 
@@ -775,21 +790,16 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onFocus={onCityFocus}
               onBlur={() => {
                 if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
-                // close menu on blur
                 if (cityOpen) {
                   setCityOpen(false)
                   setCityActiveIndex(-1)
                 }
-                // if invalid, show banner
                 markCityNeedsDecision()
               }}
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
-              className={[
-                inputClass,
-                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
-              ].join(' ')}
+              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
@@ -802,8 +812,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     onClick={chooseNotListed}
                     className={cityItemClass(cityActiveIndex === -1)}
                   >
-                    City not listed
-                    <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
+                    City not listed <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
                   </button>
 
                   <div className="h-px bg-gray-200" />
@@ -977,13 +986,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to{' '}
+              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 
-          <p className="text-xs text-gray-600">
-            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-          </p>
+          <p className="text-xs text-gray-600">Note: some language may be automatically censored. Hate speech/slurs are not allowed.</p>
         </div>
       </div>
 
