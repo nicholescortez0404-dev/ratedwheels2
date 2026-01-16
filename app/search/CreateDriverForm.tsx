@@ -81,9 +81,10 @@ const STATES: { code: string; name: string }[] = [
   { code: 'WY', name: 'Wyoming' },
 ]
 
-function bestStateMatches(qRaw: string, limit = 8) {
+// ✅ ALL states when empty, otherwise best matches (scrollable dropdown)
+function bestStateMatches(qRaw: string, limit = 60) {
   const q = qRaw.trim().toLowerCase()
-  if (!q) return STATES.slice(0, limit)
+  if (!q) return STATES
 
   const starts: typeof STATES = []
   const contains: typeof STATES = []
@@ -113,6 +114,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [state, setState] = useState('')
   const [stateOpen, setStateOpen] = useState(false)
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
+  const stateListRef = useRef<HTMLDivElement | null>(null)
+  const [stateActiveIndex, setStateActiveIndex] = useState<number>(-1)
 
   // City typeahead (optional)
   const [cityInput, setCityInput] = useState('')
@@ -157,7 +160,23 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const overLimit = commentCount > MAX_COMMENT_CHARS
 
   const statePicked = state.trim().length === 2
-  const stateMatches = useMemo(() => bestStateMatches(stateInput, 8), [stateInput])
+  const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
+
+  // ---- State keyboard helpers ----
+  const stateHasMenu = stateOpen && stateMatches.length > 0
+  const stateMaxIdx = stateMatches.length ? stateMatches.length - 1 : -1
+
+  function scrollActiveStateIntoView(nextIdx: number) {
+    if (!stateListRef.current) return
+    const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }
+
+  const stateItemClass = (active: boolean) =>
+    [
+      'w-full text-left px-3 py-2 text-sm transition',
+      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
+    ].join(' ')
 
   const normalizedCityInput = cityInput.trim().toLowerCase()
   const cityLooksValid =
@@ -219,6 +238,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
       if (stateBoxRef.current && !stateBoxRef.current.contains(target)) {
         setStateOpen(false)
+        setStateActiveIndex(-1)
       }
 
       if (cityOpen) {
@@ -334,6 +354,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setState(up)
     setStateInput(up)
     setStateOpen(false)
+    setStateActiveIndex(-1)
 
     resetCity()
     if (error) setError(null)
@@ -351,13 +372,86 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
     setStateInput(cleaned)
     setStateOpen(true)
+    setStateActiveIndex(-1)
 
+    // keep statePicked accurate only when it's a real 2-letter code
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
     } else {
       setState('')
       resetCity()
+    }
+  }
+
+  function onStateFocus() {
+    setStateOpen(true)
+  }
+
+  function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (loading) return
+
+    const anyResults = stateMatches.length > 0
+    const maxIdx = anyResults ? stateMatches.length - 1 : -1
+
+    if (e.key === 'Escape') {
+      if (stateOpen) {
+        e.preventDefault()
+        setStateOpen(false)
+        setStateActiveIndex(-1)
+      }
+      return
+    }
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!stateOpen) {
+        setStateOpen(true)
+        setStateActiveIndex(-1)
+        return
+      }
+
+      setStateActiveIndex((prev) => {
+        let next = prev
+        if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : -1
+        else next = prev === -1 ? maxIdx : prev - 1
+        setTimeout(() => scrollActiveStateIntoView(next), 0)
+        return next
+      })
+      return
+    }
+
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const raw = stateInput.trim()
+      if (!raw) return
+
+      const upper = raw.toUpperCase()
+
+      const exactCode = STATES.find((s) => s.code === upper)
+      if (exactCode) {
+        e.preventDefault()
+        commitState(exactCode.code)
+        return
+      }
+
+      const exactName = STATES.find((s) => s.name.toUpperCase() === upper)
+      if (exactName) {
+        e.preventDefault()
+        commitState(exactName.code)
+        return
+      }
+
+      if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
+        e.preventDefault()
+        commitState(stateMatches[stateActiveIndex].code)
+        return
+      }
+
+      const best = stateMatches[0]
+      if (best) {
+        e.preventDefault()
+        commitState(best.code)
+      }
     }
   }
 
@@ -779,16 +873,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             <input
               value={stateInput}
               onChange={(e) => onStateChange(e.target.value)}
-              onFocus={() => setStateOpen(true)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter' && e.key !== 'Tab') return
-                const code = stateInput.trim().toUpperCase().slice(0, 2)
-                const isValid = STATES.some((s) => s.code === code)
-                if (isValid && stateInput.trim().length <= 2) {
-                  e.preventDefault()
-                  commitState(code)
-                }
-              }}
+              onFocus={onStateFocus}
+              onKeyDown={onStateKeyDown}
               placeholder="State (IL)"
               disabled={loading}
               className={[inputClass, loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
@@ -796,13 +882,15 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
             {stateOpen && !loading && (
               <div className={stateDropdownClass}>
-                <div className={dropdownScrollClass}>
-                  {stateMatches.map((s) => (
+                <div ref={stateListRef} className={dropdownScrollClass}>
+                  {stateMatches.map((s, idx) => (
                     <button
                       key={s.code}
                       type="button"
+                      data-state-idx={idx}
+                      onMouseEnter={() => setStateActiveIndex(idx)}
                       onClick={() => commitState(s.code)}
-                      className="w-full text-left px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
+                      className={stateItemClass(stateActiveIndex === idx)}
                     >
                       <span className="font-semibold">{s.code}</span>
                       <span className="ml-2 text-gray-600">{s.name}</span>
@@ -813,6 +901,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             )}
 
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
+
+            {stateOpen && !loading && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                Tip: use ↑ ↓ then Enter to select. Esc to close. Enter/Tab picks best match.
+              </div>
+            )}
           </div>
 
           {/* CITY */}
@@ -834,24 +928,32 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
-              className={[
-                inputClass,
-                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
-              ].join(' ')}
+              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
               <div className={cityDropdownClass}>
                 <div ref={cityListRef} className={dropdownScrollClass}>
+                  {/* ✅ MOBILE FIX: use PointerDown/MouseDown + preventDefault so blur doesn't eat taps */}
                   <button
                     type="button"
                     data-city-idx={-1}
                     onMouseEnter={() => setCityActiveIndex(-1)}
-                    onClick={chooseNotListed}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      chooseNotListed()
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      chooseNotListed()
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      chooseNotListed()
+                    }}
                     className={cityItemClass(cityActiveIndex === -1)}
                   >
-                    City not listed{' '}
-                    <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
+                    City not listed <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
                   </button>
 
                   <div className="h-px bg-gray-200" />
@@ -860,9 +962,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length
-                        ? 'No matches. Press Enter to use it anyway.'
-                        : 'No cities loaded yet.'}
+                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'No cities loaded yet.'}
                     </div>
                   ) : (
                     <>
@@ -872,7 +972,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                           type="button"
                           data-city-idx={idx}
                           onMouseEnter={() => setCityActiveIndex(idx)}
-                          onClick={() => pickCitySuggestion(name)}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            pickCitySuggestion(name)
+                          }}
+                          onPointerDown={(e) => {
+                            e.preventDefault()
+                            pickCitySuggestion(name)
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            pickCitySuggestion(name)
+                          }}
                           className={cityItemClass(cityActiveIndex === idx)}
                         >
                           {name}
@@ -882,7 +993,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                       {isBrowsingCities && (
                         <button
                           type="button"
-                          onClick={() => setCityLimit((p) => Math.min(p + 100, 2000))}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setCityLimit((p) => Math.min(p + 100, 2000))
+                          }}
+                          onPointerDown={(e) => {
+                            e.preventDefault()
+                            setCityLimit((p) => Math.min(p + 100, 2000))
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            setCityLimit((p) => Math.min(p + 100, 2000))
+                          }}
                           className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         >
                           Load more cities…
@@ -937,7 +1059,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           {showCityBanner && (
             <div
               className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-              // ✅ prevents input blur/outside-click from eating the first click
               onMouseDown={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -1010,9 +1131,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onChange={(e) => {
                 const v = e.target.value
                 setComment(v)
-                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) {
-                  setError(null)
-                }
+                if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) setError(null)
               }}
               placeholder="Write what happened…"
               rows={3}
@@ -1055,15 +1174,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         type="submit"
         disabled={disablePrimary}
         className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-        title={
-          !statePicked
-            ? 'Pick a state to continue'
-            : !handleValid
-              ? 'Driver handle format invalid'
-              : overLimit
-                ? `Shorten comment to ${MAX_COMMENT_CHARS} chars to submit`
-                : undefined
-        }
       >
         {loading ? 'Posting…' : 'Create driver & post review'}
       </button>
@@ -1074,7 +1184,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           onClick={onCreateOnly}
           disabled={disableCreateOnly}
           className="text-xs text-gray-600 underline underline-offset-2 hover:text-gray-900 disabled:opacity-60 disabled:cursor-not-allowed"
-          title={!statePicked ? 'Pick a state to continue' : !handleValid ? 'Driver handle format invalid' : undefined}
         >
           Create driver only
         </button>
