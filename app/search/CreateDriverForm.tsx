@@ -86,6 +86,34 @@ const STATES: { code: string; name: string }[] = [
   { code: 'WY', name: 'Wyoming' },
 ]
 
+// ✅ Ordering: safety/comfort first (by slug). Anything not listed falls to the bottom (alphabetical).
+const TAG_PRIORITY: Record<string, number> = {
+  // NEGATIVE (safety/comfort first)
+  'reckless-driving': 1,
+  'felt-uncomfortable': 2,
+  'ignored-accommodations': 3,
+  'unprofessional-behavior': 4,
+  unfriendly: 5,
+  'car-not-clean': 6,
+  'late-pickup': 7,
+  'excessive-talking': 8,
+
+  // NEUTRAL (amenities / truly neutral)
+  'charger-available': 1,
+  'water-snacks-provided': 2,
+  'tissues-available': 3,
+
+  // POSITIVE (safety/comfort first)
+  'safe-driving': 1,
+  'felt-comfortable': 2,
+  respectful: 3,
+  professional: 4,
+  friendly: 5,
+  'clean-car': 6,
+  'smooth-ride': 7,
+  'good-navigation': 8,
+}
+
 // ✅ ALL states when empty, otherwise best matches (scrollable dropdown)
 function bestStateMatches(qRaw: string, limit = 60) {
   const q = qRaw.trim().toLowerCase()
@@ -292,13 +320,25 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }, [])
 
+  // ✅ Group + sort by priority within each category
   const grouped = useMemo(() => {
     const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
+
     for (const t of tags) {
-      const cat = String(t.category || '').toLowerCase()
+      const cat = String(t.category || '').trim().toLowerCase()
       if (!byCat[cat]) byCat[cat] = []
       byCat[cat].push(t)
     }
+
+    for (const cat of Object.keys(byCat)) {
+      byCat[cat].sort((a, b) => {
+        const pa = TAG_PRIORITY[a.slug] ?? 999
+        const pb = TAG_PRIORITY[b.slug] ?? 999
+        if (pa !== pb) return pa - pb
+        return a.label.localeCompare(b.label)
+      })
+    }
+
     return byCat
   }, [tags])
 
@@ -846,8 +886,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  const cityDropdownClass =
-    'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+  const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const dropdownScrollClass = 'max-h-56 overflow-auto'
 
@@ -858,7 +897,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     ].join(' ')
 
   // show "Load more" when we likely hit the limit
-  const showLoadMoreCities = citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
+  const showLoadMoreCities =
+    citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
@@ -944,7 +984,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
-              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
+              className={[
+                inputClass,
+                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
+              ].join(' ')}
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
@@ -977,7 +1020,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'Start typing to filter.'}
+                      {cityInput.trim().length
+                        ? 'No matches. Press Enter to use it anyway.'
+                        : 'Start typing to filter.'}
                     </div>
                   ) : (
                     <>

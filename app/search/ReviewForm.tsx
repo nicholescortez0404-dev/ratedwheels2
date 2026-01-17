@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+
 import { supabase } from '@/lib/supabaseClient'
 
 type TagRow = {
@@ -13,6 +14,34 @@ type TagRow = {
 }
 
 const MAX_COMMENT_CHARS = 500
+
+// ✅ Ordering: safety/comfort first (by slug). Anything not listed falls to the bottom (alphabetical).
+const TAG_PRIORITY: Record<string, number> = {
+  // NEGATIVE
+  'reckless-driving': 1,
+  'felt-uncomfortable': 2,
+  'ignored-accommodations': 3,
+  'unprofessional-behavior': 4,
+  unfriendly: 5,
+  'car-not-clean': 6,
+  'late-pickup': 7,
+  'excessive-talking': 8,
+
+  // NEUTRAL
+  'charger-available': 1,
+  'water-snacks-provided': 2,
+  'tissues-available': 3,
+
+  // POSITIVE
+  'safe-driving': 1,
+  'felt-comfortable': 2,
+  respectful: 3,
+  professional: 4,
+  friendly: 5,
+  'clean-car': 6,
+  'smooth-ride': 7,
+  'good-navigation': 8,
+}
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
@@ -95,6 +124,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     return () => clearTimeout(t)
   }, [toast])
 
+  // ✅ group + sort by priority within each category
   const grouped = useMemo(() => {
     const byCat: Record<string, TagRow[]> = {
       negative: [],
@@ -103,9 +133,18 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
 
     for (const t of tags) {
-      const cat = String(t.category || '').toLowerCase()
+      const cat = String(t.category || '').trim().toLowerCase()
       if (!byCat[cat]) byCat[cat] = []
       byCat[cat].push(t)
+    }
+
+    for (const cat of Object.keys(byCat)) {
+      byCat[cat].sort((a, b) => {
+        const pa = TAG_PRIORITY[a.slug] ?? 999
+        const pb = TAG_PRIORITY[b.slug] ?? 999
+        if (pa !== pb) return pa - pb
+        return a.label.localeCompare(b.label)
+      })
     }
 
     return byCat
@@ -145,7 +184,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
 
-    // Option A enforcement: if over limit, do not submit.
+    // If over limit, do not submit.
     if (overLimit) {
       setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
       return
@@ -264,7 +303,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
           <TagGroup title="Positive" list={grouped.positive ?? []} />
         </div>
 
-        {/* Comment box with RMP-style counter + red state when over */}
+        {/* Comment box with counter + red state when over */}
         <div className="space-y-2">
           <div className="relative">
             <textarea
@@ -272,7 +311,6 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
               onChange={(e) => {
                 const v = e.target.value
                 setComment(v)
-                // If user trims back under the limit, clear the "trim to submit" error automatically
                 if (v.length <= MAX_COMMENT_CHARS && error?.includes('shorten your comment')) {
                   setError(null)
                 }
@@ -297,7 +335,6 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
             </div>
           </div>
 
-          {/* Only show this guidance when over the limit */}
           {overLimit && (
             <p className="text-sm text-red-600">
               Your comment is too long. Please shorten it to{' '}
