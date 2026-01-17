@@ -305,7 +305,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         .select('id,label,slug,category,is_active')
         .or('is_active.is.null,is_active.eq.true')
         .order('category', { ascending: true })
-        .order('label', { ascending: true })
+        .order('sort_order', { ascending: true })
 
       if (!mounted) return
       if (error) {
