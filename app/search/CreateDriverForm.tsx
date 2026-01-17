@@ -275,7 +275,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const { data, error } = await supabase
         .from('tags')
         .select('id,label,slug,category,is_active')
-        .eq('is_active', true)
+        .or('is_active.is.null,is_active.eq.true')
         .order('category', { ascending: true })
         .order('label', { ascending: true })
 
