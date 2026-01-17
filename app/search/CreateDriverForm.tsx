@@ -1179,9 +1179,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
         <div className="space-y-4">
           <div className="text-gray-900 font-medium">Tags</div>
-          <TagGroup title="Negative" list={grouped.negative ?? []} />
-          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
           <TagGroup title="Positive" list={grouped.positive ?? []} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
+          <TagGroup title="Negative" list={grouped.negative ?? []} />
         </div>
 
         <div className="space-y-2">

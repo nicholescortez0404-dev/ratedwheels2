@@ -298,9 +298,9 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
 
         <div className="space-y-4">
           <div className="text-gray-900 font-medium">Tags</div>
-          <TagGroup title="Negative" list={grouped.negative ?? []} />
-          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
           <TagGroup title="Positive" list={grouped.positive ?? []} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
+          <TagGroup title="Negative" list={grouped.negative ?? []} />
         </div>
 
         {/* Comment box with counter + red state when over */}
