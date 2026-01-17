@@ -12,7 +12,16 @@ type TagRow = {
   is_active?: boolean
 }
 
-type CitySuggestionRow = { name: string }
+// ✅ Option B: RPC returns both
+type CitySuggestionRow = { name: string; display_name: string }
+
+// We'll keep suggestions as objects so we can:
+// - display display_name
+// - (optionally) still have raw name if we ever need it
+type CitySuggestion = {
+  name: string // raw census name in cities table (e.g., "Chicago city")
+  display_name: string // cleaned label (e.g., "Chicago")
+}
 
 const MAX_COMMENT_CHARS = 500
 
@@ -21,10 +30,6 @@ const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
 
 function normalizeHandle(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, '-')
-}
-
-function normalizeCityLabel(name: string) {
-  return name.trim().replace(/\s+(city|town|village|borough|cdp)$/i, '')
 }
 
 const STATES: { code: string; name: string }[] = [
@@ -123,8 +128,11 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [cityNotListed, setCityNotListed] = useState(false)
   const [cityOpen, setCityOpen] = useState(false)
   const [cityLoading, setCityLoading] = useState(false)
-  const [citySuggestions, setCitySuggestions] = useState<string[]>([])
-  const [cityLimit, setCityLimit] = useState<number>(100) // slightly higher by default for better "type 1 letter" experience
+
+  // ✅ store objects, not strings
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([])
+  const [cityLimit, setCityLimit] = useState<number>(100)
+
   const cityBoxRef = useRef<HTMLDivElement | null>(null)
   const cityInputRef = useRef<HTMLInputElement | null>(null)
   const cityListRef = useRef<HTMLDivElement | null>(null)
@@ -174,16 +182,22 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
     ].join(' ')
 
+  // ✅ valid if it matches one of the display_name suggestions (case-insensitive)
   const normalizedCityInput = cityInput.trim().toLowerCase()
   const cityLooksValid =
     !normalizedCityInput ||
     cityNotListed ||
-    citySuggestions.some((c) => c.trim().toLowerCase() === normalizedCityInput)
+    citySuggestions.some((c) => c.display_name.trim().toLowerCase() === normalizedCityInput)
 
   // Banner: show on blur/submit OR immediately when we know there are no matches
   const typedCity = cityInput.trim().length > 0
   const noCityMatches =
-    statePicked && cityOpen && !cityLoading && !cityNotListed && typedCity && citySuggestions.length === 0
+    statePicked &&
+    cityOpen &&
+    !cityLoading &&
+    !cityNotListed &&
+    typedCity &&
+    citySuggestions.length === 0
 
   const showCityBanner =
     statePicked &&
@@ -448,7 +462,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }
 
-  // Fetch city suggestions
+  // Fetch city suggestions (now expecting display_name)
   useEffect(() => {
     if (!statePicked) {
       setCitySuggestions([])
@@ -471,9 +485,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const t = setTimeout(async () => {
       setCityLoading(true)
 
-      // ✅ IMPORTANT CHANGE:
-      // Use the SAME scrollable limit for typed searches too, so typing "c", "ch", "chi"
-      // shows ALL matches (within the selected state) up to cityLimit.
       const { data, error } = await supabase.rpc('city_suggestions', {
         p_state: state,
         p_query: shouldFetchSearch ? q : '',
@@ -490,9 +501,20 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       }
 
       const rows = (data ?? []) as CitySuggestionRow[]
-      const names = rows.map((r) => normalizeCityLabel(r.name)).filter(Boolean)
-      const uniq = Array.from(new Set(names))
-      setCitySuggestions(uniq)
+
+      // ✅ dedupe by display_name (case-insensitive), keep highest-ranked first from DB ordering
+      const seen = new Set<string>()
+      const suggestions: CitySuggestion[] = []
+      for (const r of rows) {
+        const label = (r.display_name ?? '').trim()
+        if (!label) continue
+        const key = label.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        suggestions.push({ name: r.name, display_name: label })
+      }
+
+      setCitySuggestions(suggestions)
       setCityLoading(false)
 
       if (suppressCityOpenRef.current) {
@@ -508,7 +530,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return () => clearTimeout(t)
   }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
 
-  // Keep issue state in sync (banner itself is controlled by showCityBanner)
+  // Keep issue state in sync
   useEffect(() => {
     if (!statePicked) return
 
@@ -541,11 +563,13 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (statePicked) setCityOpen(true)
   }
 
-  function pickCitySuggestion(name: string) {
+  function pickCitySuggestion(s: CitySuggestion) {
     suppressCityOpenRef.current = true
 
-    setCityInput(name)
-    setCityValue(name)
+    // ✅ show + store the clean display_name
+    setCityInput(s.display_name)
+    setCityValue(s.display_name)
+
     setCityNotListed(false)
     setCityOpen(false)
     setCityActiveIndex(-1)
@@ -703,6 +727,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const typed = cityInput.trim()
     const allowAny = cityDecision === 'enter_anyway'
 
+    // ✅ Always store the clean city label (display_name) when chosen from list
     const cityToSave = cityNotListed
       ? null
       : !typed
@@ -821,7 +846,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+  const cityDropdownClass =
+    'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const dropdownScrollClass = 'max-h-56 overflow-auto'
 
@@ -924,7 +950,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
             {statePicked && cityOpen && !loading && !cityNotListed && (
               <div className={cityDropdownClass}>
                 <div ref={cityListRef} className={dropdownScrollClass}>
-                  {/* ✅ MOBILE FIX: use PointerDown/MouseDown + preventDefault so blur doesn't eat taps */}
                   <button
                     type="button"
                     data-city-idx={-1}
@@ -956,27 +981,27 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     </div>
                   ) : (
                     <>
-                      {citySuggestions.map((name, idx) => (
+                      {citySuggestions.map((s, idx) => (
                         <button
-                          key={name}
+                          key={`${s.display_name}-${idx}`}
                           type="button"
                           data-city-idx={idx}
                           onMouseEnter={() => setCityActiveIndex(idx)}
                           onMouseDown={(e) => {
                             e.preventDefault()
-                            pickCitySuggestion(name)
+                            pickCitySuggestion(s)
                           }}
                           onPointerDown={(e) => {
                             e.preventDefault()
-                            pickCitySuggestion(name)
+                            pickCitySuggestion(s)
                           }}
                           onClick={(e) => {
                             e.preventDefault()
-                            pickCitySuggestion(name)
+                            pickCitySuggestion(s)
                           }}
                           className={cityItemClass(cityActiveIndex === idx)}
                         >
-                          {name}
+                          {s.display_name}
                         </button>
                       ))}
 
