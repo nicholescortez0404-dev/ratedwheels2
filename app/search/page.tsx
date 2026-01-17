@@ -114,7 +114,7 @@ export default async function SearchPage({
           const tag = rt?.tag
           if (!tag) continue
 
-          const cat = String(tag.category || '').toLowerCase()
+          const cat = String(tag?.category ?? '').trim().toLowerCase()
           if (cat === 'positive' || cat === 'neutral' || cat === 'negative') {
             traitCounts[cat]++
           }
