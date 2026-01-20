@@ -84,7 +84,7 @@ const STATES: { code: string; name: string }[] = [
   { code: 'WY', name: 'Wyoming' },
 ]
 
-// Ordering: safety/comfort first (by slug). Anything not listed falls to the bottom (alphabetical).
+// ✅ Ordering: safety/comfort first (by slug). Anything not listed falls to bottom (alphabetical).
 const TAG_PRIORITY: Record<string, number> = {
   // NEGATIVE
   'reckless-driving': 1,
@@ -120,7 +120,7 @@ function normalizeHandle(raw: string) {
 
 function bestStateMatches(qRaw: string, limit = 60) {
   const q = qRaw.trim().toLowerCase()
-  if (!q) return STATES.slice(0, limit)
+  if (!q) return STATES
 
   const starts: typeof STATES = []
   const contains: typeof STATES = []
@@ -163,35 +163,29 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const handle = useMemo(() => normalizeHandle(initialRaw), [initialRaw])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
 
-  /* -------------------- driver fields -------------------- */
-
+  // driver fields
   const [displayName, setDisplayName] = useState(initialRaw.trim())
-
   const [carColor, setCarColor] = useState('')
   const [carMake, setCarMake] = useState('')
   const [carModel, setCarModel] = useState('')
 
-  /* -------------------- State typeahead (required) -------------------- */
-
+  // State typeahead (required)
   const [stateInput, setStateInput] = useState('')
   const [state, setState] = useState('')
   const [stateOpen, setStateOpen] = useState(false)
-  const [stateActiveIndex, setStateActiveIndex] = useState<number>(-1)
-
+  const [stateActiveIndex, setStateActiveIndex] = useState(-1)
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
   const stateListRef = useRef<HTMLDivElement | null>(null)
 
-  /* -------------------- City typeahead (optional) -------------------- */
-
+  // City typeahead (optional)
   const [cityInput, setCityInput] = useState('')
   const [cityValue, setCityValue] = useState<string | null>(null)
   const [cityNotListed, setCityNotListed] = useState(false)
-
   const [cityOpen, setCityOpen] = useState(false)
   const [cityLoading, setCityLoading] = useState(false)
   const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([])
-  const [cityLimit, setCityLimit] = useState<number>(100)
-  const [cityActiveIndex, setCityActiveIndex] = useState<number>(-1)
+  const [cityLimit, setCityLimit] = useState(100)
+  const [cityActiveIndex, setCityActiveIndex] = useState(-1)
 
   const cityBoxRef = useRef<HTMLDivElement | null>(null)
   const cityInputRef = useRef<HTMLInputElement | null>(null)
@@ -201,8 +195,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const suppressCityOpenRef = useRef(false)
   const cityFetchId = useRef(0)
 
-  /* -------------------- mobile tap vs scroll guard -------------------- */
-
+  // Mobile tap vs scroll guard (STATE + CITY)
   const touchStartYRef = useRef(0)
   const touchMovedRef = useRef(false)
 
@@ -215,28 +208,20 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   function optionPointerMove(e: React.PointerEvent) {
     if (e.pointerType !== 'touch') return
-    if (Math.abs(e.clientY - touchStartYRef.current) > 8) {
-      touchMovedRef.current = true
-    }
+    if (Math.abs(e.clientY - touchStartYRef.current) > 8) touchMovedRef.current = true
   }
 
-  function isTap(e: React.PointerEvent) {
-    // For mouse/pen: always treat as tap.
-    if (e.pointerType !== 'touch') return true
-    // For touch: only tap if we didn't scroll.
-    return !touchMovedRef.current
+  function isTouchTap(e: React.PointerEvent) {
+    return e.pointerType === 'touch' && !touchMovedRef.current
   }
 
-  /* -------------------- review fields -------------------- */
-
+  // review fields
   const [stars, setStars] = useState<number>(5)
-  const [comment, setComment] = useState<string>('')
-
+  const [comment, setComment] = useState('')
   const [tags, setTags] = useState<TagRow[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
 
-  /* -------------------- UI state -------------------- */
-
+  // ui
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -246,8 +231,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   >(null)
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
-
-  /* -------------------- derived -------------------- */
 
   const commentCount = comment.length
   const overLimit = commentCount > MAX_COMMENT_CHARS
@@ -262,7 +245,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     citySuggestions.some((c) => c.display_name.trim().toLowerCase() === normalizedCityInput)
 
   const typedCity = cityInput.trim().length > 0
-
   const noCityMatches =
     statePicked &&
     cityOpen &&
@@ -280,32 +262,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     !cityDecision &&
     (cityTouched || submitAttempted || noCityMatches)
 
-  const showLoadMoreCities =
-    citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
-
-  const maxTags = useMemo(() => {
-    const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
-
-    for (const t of tags) {
-      const cat = String(t.category || '').trim().toLowerCase()
-      if (!byCat[cat]) byCat[cat] = []
-      byCat[cat].push(t)
-    }
-
-    for (const cat of Object.keys(byCat)) {
-      byCat[cat].sort((a, b) => {
-        const pa = TAG_PRIORITY[a.slug] ?? 999
-        const pb = TAG_PRIORITY[b.slug] ?? 999
-        if (pa !== pb) return pa - pb
-        return a.label.localeCompare(b.label)
-      })
-    }
-
-    return byCat
-  }, [tags])
-
-  /* -------------------- scrolling helpers -------------------- */
-
   function scrollActiveStateIntoView(nextIdx: number) {
     if (!stateListRef.current) return
     const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
@@ -317,8 +273,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     const el = cityListRef.current.querySelector<HTMLElement>(`[data-city-idx="${nextIdx}"]`)
     el?.scrollIntoView({ block: 'nearest' })
   }
-
-  /* -------------------- city helpers -------------------- */
 
   function resetCity() {
     setCityInput('')
@@ -349,8 +303,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setSubmitAttempted(true)
   }
 
-  /* -------------------- outside click close -------------------- */
-
+  // Outside click close (banner counts as inside)
   useEffect(() => {
     function onDocPointerDown(e: PointerEvent) {
       const target = e.target as Node
@@ -378,8 +331,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
   }, [cityOpen, statePicked, cityInput, cityNotListed, cityLooksValid, cityDecision, cityLoading])
 
-  /* -------------------- load tag options -------------------- */
-
+  // Load tag options
   useEffect(() => {
     let mounted = true
 
@@ -391,12 +343,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
         .order('sort_order', { ascending: true })
 
       if (!mounted) return
-
       if (tagErr) {
         setError(tagErr.message)
         return
       }
-
       setTags((data ?? []) as TagRow[])
     })()
 
@@ -405,7 +355,27 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }, [])
 
-  /* -------------------- tags UI helpers -------------------- */
+  // Group + sort tags by priority within category
+  const grouped = useMemo(() => {
+    const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
+
+    for (const t of tags) {
+      const cat = String(t.category || '').trim().toLowerCase()
+      if (!byCat[cat]) byCat[cat] = []
+      byCat[cat].push(t)
+    }
+
+    for (const cat of Object.keys(byCat)) {
+      byCat[cat].sort((a, b) => {
+        const pa = TAG_PRIORITY[a.slug] ?? 999
+        const pb = TAG_PRIORITY[b.slug] ?? 999
+        if (pa !== pb) return pa - pb
+        return a.label.localeCompare(b.label)
+      })
+    }
+
+    return byCat
+  }, [tags])
 
   function toggleTag(id: string) {
     setSelectedTagIds((prev) => {
@@ -416,6 +386,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     })
   }
 
+  // Chip styling
   function chipClass(category: string, selected: boolean) {
     const base =
       'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
@@ -437,7 +408,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   const TagGroup = ({ title, list }: { title: string; list: TagRow[] }) => {
     if (!list || list.length === 0) return null
-
     return (
       <div className="space-y-2">
         <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
@@ -459,8 +429,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       </div>
     )
   }
-
-  /* -------------------- state handlers -------------------- */
 
   function pickState(code: string) {
     const up = code.toUpperCase().trim()
@@ -516,7 +484,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-
       if (!stateOpen) {
         setStateOpen(true)
         setStateActiveIndex(-1)
@@ -567,8 +534,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     }
   }
 
-  /* -------------------- city fetch -------------------- */
-
+  // Fetch city suggestions (RPC)
   useEffect(() => {
     if (!statePicked) {
       setCitySuggestions([])
@@ -577,7 +543,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       setCityActiveIndex(-1)
       return
     }
-
     if (cityNotListed) return
     if (suppressCityOpenRef.current && !cityOpen) return
 
@@ -639,8 +604,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     return () => clearTimeout(t)
   }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
-
-  /* -------------------- city handlers -------------------- */
 
   function onCityFocus() {
     if (!statePicked) return
@@ -812,11 +775,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return false
   }
 
-  /* -------------------- create driver + submit -------------------- */
-
   async function createDriver(): Promise<InsertedDriver> {
     if (!statePicked) throw new Error('Please select a state.')
-
     if (!handleValid) {
       throw new Error(
         'Driver handle format is invalid. It must look like "8841-mike" (1–4 letters/numbers, dash, 2–24 letters).'
@@ -832,7 +792,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           : cityDecision === 'enter_anyway'
             ? typed
             : cityLooksValid
-              ? cityValue?.trim() || typed
+              ? (cityValue?.trim() || typed)
               : null
 
     const { data: inserted, error: insertErr } = await supabase
@@ -901,6 +861,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(json?.error || 'Driver created, but review failed to post.')
+        setLoading(false)
         return
       }
 
@@ -915,8 +876,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       setLoading(false)
     }
   }
-
-  /* -------------------- styles -------------------- */
 
   const inputClass =
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
@@ -942,7 +901,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
       active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
     ].join(' ')
 
-  /* -------------------- render -------------------- */
+  const showLoadMoreCities =
+    citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   return (
     <form onSubmit={onCreateAndReview} className="space-y-4">
@@ -991,11 +951,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
           />
         </div>
 
-        <p className="text-xs text-gray-600">
-          Tip: Searches are most precise when you use plate + name. Adding city and car details helps
-          people pick the right driver.
-        </p>
-
         <div className="flex gap-3">
           {/* STATE */}
           <div ref={stateBoxRef} className="relative w-40">
@@ -1011,7 +966,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
             {stateOpen && !loading && (
               <div className={stateDropdownClass}>
-                {/* bulletproof: track pointer movement on container */}
                 <div
                   ref={stateListRef}
                   className={dropdownScrollClass}
@@ -1029,7 +983,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                       onPointerDown={optionPointerDown}
                       onPointerMove={optionPointerMove}
                       onPointerUp={(e) => {
-                        if (isTap(e)) commitState(s.code)
+                        if (isTouchTap(e)) commitState(s.code)
                       }}
                       onClick={(e) => {
                         e.preventDefault()
@@ -1077,7 +1031,6 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
               <div className={cityDropdownClass}>
-                {/* bulletproof: track pointer movement on container */}
                 <div
                   ref={cityListRef}
                   className={dropdownScrollClass}
@@ -1093,7 +1046,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     onPointerDown={optionPointerDown}
                     onPointerMove={optionPointerMove}
                     onPointerUp={(e) => {
-                      if (isTap(e)) chooseNotListed()
+                      if (isTouchTap(e)) chooseNotListed()
                     }}
                     onClick={(e) => {
                       e.preventDefault()
@@ -1127,7 +1080,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                           onPointerDown={optionPointerDown}
                           onPointerMove={optionPointerMove}
                           onPointerUp={(e) => {
-                            if (isTap(e)) pickCitySuggestion(s)
+                            if (isTouchTap(e)) pickCitySuggestion(s)
                           }}
                           onClick={(e) => {
                             e.preventDefault()
@@ -1146,7 +1099,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                           onPointerDown={optionPointerDown}
                           onPointerMove={optionPointerMove}
                           onPointerUp={(e) => {
-                            if (isTap(e)) setCityLimit((p) => Math.min(p + 200, 2000))
+                            if (isTouchTap(e)) setCityLimit((p) => Math.min(p + 200, 2000))
                           }}
                           onClick={(e) => {
                             e.preventDefault()
@@ -1236,12 +1189,12 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
         <div className="space-y-4">
           <div className="text-gray-900 font-medium">Tags</div>
-          <TagGroup title="Positive" list={maxTags.positive ?? []} />
-          <TagGroup title="Neutral" list={maxTags.neutral ?? []} />
-          <TagGroup title="Negative" list={maxTags.negative ?? []} />
+          <TagGroup title="Positive" list={grouped.positive ?? []} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
+          <TagGroup title="Negative" list={grouped.negative ?? []} />
         </div>
 
-        {/* Comment */}
+        {/* Comment box with counter */}
         <div className="space-y-2">
           <div className="relative">
             <textarea

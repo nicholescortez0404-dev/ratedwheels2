@@ -8,10 +8,13 @@ import { createSupabaseServerClient } from '@/lib/supabaseServer'
 
 type Driver = {
   id: string
-  display_name: string
+  display_name: string | null
   driver_handle: string
   city: string | null
   state: string | null
+  car_color: string | null
+  car_make: string | null
+  car_model: string | null
 }
 
 type DriverStat = {
@@ -29,11 +32,11 @@ export default async function DriversPage() {
   noStore()
   const supabase = createSupabaseServerClient()
 
-  // 1) Load drivers
+  // 1) Load drivers (newest first)
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
-    .select('id,display_name,driver_handle,city,state,created_at')
-    .order('created_at', { ascending: false }) // NEWEST FIRST so you can immediately see new ones
+    .select('id,display_name,driver_handle,city,state,car_color,car_make,car_model,created_at')
+    .order('created_at', { ascending: false })
 
   if (driversErr) {
     return (
@@ -106,6 +109,8 @@ export default async function DriversPage() {
               const avg = s?.avg_stars ?? null
               const count = s?.review_count ?? 0
 
+              const carLine = [d.car_color, d.car_make, d.car_model].filter(Boolean).join(' ')
+
               return (
                 <Link
                   key={d.id}
@@ -114,12 +119,15 @@ export default async function DriversPage() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <div className="text-xl font-semibold">{d.display_name}</div>
+                      <div className="text-xl font-semibold">{d.display_name ?? d.driver_handle}</div>
                       <div className="text-gray-700">@{d.driver_handle}</div>
+
                       <div className="text-gray-600">
-                        {d.city ? d.city : '—'}
+                        {d.city ?? '—'}
                         {d.state ? `, ${d.state}` : ''}
                       </div>
+
+                      {carLine && <div className="text-gray-600">{carLine}</div>}
                     </div>
 
                     <div className="text-right">
