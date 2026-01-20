@@ -88,7 +88,6 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         .from('tags')
         .select('id,label,slug,category,is_active')
         .or('is_active.is.null,is_active.eq.true')
-        .order('category', { ascending: true })
         .order('sort_order', { ascending: true })
 
 
@@ -107,16 +106,20 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
   }, [])
 
-  // After refresh: scroll to last posted review
-  useEffect(() => {
-    const last = sessionStorage.getItem('rw:lastPostedReviewId')
-    if (!last) return
+ // After refresh: show toast + scroll to last posted review
+useEffect(() => {
+  const last = sessionStorage.getItem('rw:lastPostedReviewId')
+  if (!last) return
 
-    ;(async () => {
-      await scrollToReviewId(last)
-      sessionStorage.removeItem('rw:lastPostedReviewId')
-    })()
-  }, [])
+  // ✅ show success toast even after redirect from CreateDriverForm
+  setToast('Review posted!')
+
+  ;(async () => {
+    await scrollToReviewId(last)
+    sessionStorage.removeItem('rw:lastPostedReviewId')
+  })()
+}, [])
+
 
   // Toast auto-hide
   useEffect(() => {
@@ -353,7 +356,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         <button
           type="submit"
           disabled={loading || overLimit}
-          className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           title={overLimit ? `Shorten comment to ${MAX_COMMENT_CHARS} chars to submit` : undefined}
         >
           {loading ? 'Posting…' : 'Post review'}
