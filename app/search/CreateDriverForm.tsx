@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -17,11 +17,20 @@ type TagRow = {
 type CitySuggestionRow = { name: string; display_name: string }
 
 type CitySuggestion = {
-  name: string
-  display_name: string
+  name: string // raw db/census name (kept for future use)
+  display_name: string // cleaned label to show
 }
 
 type InsertedDriver = { id: string; driver_handle: string }
+
+type Props = {
+  initialRaw: string
+  initialState?: string | null
+  initialCity?: string | null
+  initialCarColor?: string | null
+  initialCarMake?: string | null
+  initialCarModel?: string | null
+}
 
 /* -------------------- constants -------------------- */
 
@@ -157,7 +166,14 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
 
 /* -------------------- component -------------------- */
 
-export default function CreateDriverForm({ initialRaw }: { initialRaw: string }) {
+export default function CreateDriverForm({
+  initialRaw,
+  initialState,
+  initialCity,
+  initialCarColor,
+  initialCarMake,
+  initialCarModel,
+}: Props) {
   const router = useRouter()
 
   const handle = useMemo(() => normalizeHandle(initialRaw), [initialRaw])
@@ -165,21 +181,23 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   // driver fields
   const [displayName, setDisplayName] = useState(initialRaw.trim())
-  const [carColor, setCarColor] = useState('')
-  const [carMake, setCarMake] = useState('')
-  const [carModel, setCarModel] = useState('')
+  const [carColor, setCarColor] = useState(initialCarColor ?? '')
+  const [carMake, setCarMake] = useState(initialCarMake ?? '')
+  const [carModel, setCarModel] = useState(initialCarModel ?? '')
 
   // State typeahead (required)
-  const [stateInput, setStateInput] = useState('')
-  const [state, setState] = useState('')
+  const initialStateCode = (initialState ?? '').toString().trim().toUpperCase()
+  const initialStateIsValid = STATES.some((s) => s.code === initialStateCode)
+
+  const [stateInput, setStateInput] = useState(initialStateIsValid ? initialStateCode : '')
+  const [state, setState] = useState(initialStateIsValid ? initialStateCode : '')
   const [stateOpen, setStateOpen] = useState(false)
   const [stateActiveIndex, setStateActiveIndex] = useState(-1)
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
   const stateListRef = useRef<HTMLDivElement | null>(null)
 
   // City typeahead (optional)
-  const [cityInput, setCityInput] = useState('')
-  const [cityValue, setCityValue] = useState<string | null>(null)
+  const [cityInput, setCityInput] = useState((initialCity ?? '').toString())
   const [cityNotListed, setCityNotListed] = useState(false)
   const [cityOpen, setCityOpen] = useState(false)
   const [cityLoading, setCityLoading] = useState(false)
@@ -199,17 +217,17 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const touchStartYRef = useRef(0)
   const touchMovedRef = useRef(false)
 
-  function optionPointerDown(e: React.PointerEvent) {
+  const optionPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'touch') {
       touchStartYRef.current = e.clientY
       touchMovedRef.current = false
     }
-  }
+  }, [])
 
-  function optionPointerMove(e: React.PointerEvent) {
+  const optionPointerMove = useCallback((e: React.PointerEvent) => {
     if (e.pointerType !== 'touch') return
     if (Math.abs(e.clientY - touchStartYRef.current) > 8) touchMovedRef.current = true
-  }
+  }, [])
 
   function isTouchTap(e: React.PointerEvent) {
     return e.pointerType === 'touch' && !touchMovedRef.current
@@ -226,9 +244,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
   const [error, setError] = useState<string | null>(null)
 
   // City decision flow
-  const [cityDecision, setCityDecision] = useState<
-    null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'
-  >(null)
+  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(
+    initialCity && String(initialCity).trim() ? 'enter_anyway' : null
+  )
   const [cityTouched, setCityTouched] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
@@ -246,12 +264,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
   const typedCity = cityInput.trim().length > 0
   const noCityMatches =
-    statePicked &&
-    cityOpen &&
-    !cityLoading &&
-    !cityNotListed &&
-    typedCity &&
-    citySuggestions.length === 0
+    statePicked && cityOpen && !cityLoading && !cityNotListed && typedCity && citySuggestions.length === 0
 
   const showCityBanner =
     statePicked &&
@@ -274,9 +287,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     el?.scrollIntoView({ block: 'nearest' })
   }
 
-  function resetCity() {
+  const resetCity = useCallback(() => {
     setCityInput('')
-    setCityValue(null)
     setCityNotListed(false)
     setCitySuggestions([])
     setCityOpen(false)
@@ -288,9 +300,9 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityDecision(null)
 
     suppressCityOpenRef.current = false
-  }
+  }, [])
 
-  function markCityNeedsDecision() {
+  const markCityNeedsDecision = useCallback(() => {
     if (!statePicked) return
     if (cityNotListed) return
     if (cityLoading) return
@@ -301,7 +313,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     if (cityDecision) return
 
     setSubmitAttempted(true)
-  }
+  }, [statePicked, cityNotListed, cityLoading, cityInput, cityLooksValid, cityDecision])
 
   // Outside click close (banner counts as inside)
   useEffect(() => {
@@ -329,7 +341,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     document.addEventListener('pointerdown', onDocPointerDown)
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
-  }, [cityOpen, statePicked, cityInput, cityNotListed, cityLooksValid, cityDecision, cityLoading])
+  }, [cityOpen, markCityNeedsDecision])
 
   // Load tag options
   useEffect(() => {
@@ -377,14 +389,14 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return byCat
   }, [tags])
 
-  function toggleTag(id: string) {
+  const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
+  }, [])
 
   // Chip styling
   function chipClass(category: string, selected: boolean) {
@@ -430,27 +442,33 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     )
   }
 
-  function pickState(code: string) {
-    const up = code.toUpperCase().trim()
-    const match = STATES.find((s) => s.code === up)
-    if (!match) return
+  const pickState = useCallback(
+    (code: string) => {
+      const up = code.toUpperCase().trim()
+      const match = STATES.find((s) => s.code === up)
+      if (!match) return
 
-    setState(up)
-    setStateInput(up)
-    setStateOpen(false)
-    setStateActiveIndex(-1)
+      setState(up)
+      setStateInput(up)
+      setStateOpen(false)
+      setStateActiveIndex(-1)
 
-    resetCity()
-    if (error) setError(null)
-  }
+      resetCity()
+      if (error) setError(null)
+    },
+    [resetCity, error]
+  )
 
-  function commitState(code: string) {
-    pickState(code)
-    setTimeout(() => {
-      cityInputRef.current?.focus()
-      setCityOpen(true)
-    }, 0)
-  }
+  const commitState = useCallback(
+    (code: string) => {
+      pickState(code)
+      setTimeout(() => {
+        cityInputRef.current?.focus()
+        setCityOpen(true)
+      }, 0)
+    },
+    [pickState]
+  )
 
   function onStateChange(v: string) {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
@@ -605,29 +623,30 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     return () => clearTimeout(t)
   }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
 
-  function onCityFocus() {
+  const onCityFocus = useCallback(() => {
     if (!statePicked) return
     suppressCityOpenRef.current = false
     setCityOpen(true)
-  }
+  }, [statePicked])
 
-  function onCityChange(v: string) {
-    setCityInput(v)
-    setCityValue(v.trim() ? v : null)
-    setCityNotListed(false)
+  const onCityChange = useCallback(
+    (v: string) => {
+      setCityInput(v)
+      setCityNotListed(false)
 
-    setCityDecision(null)
-    setSubmitAttempted(false)
-    setCityTouched(false)
+      setCityDecision(null)
+      setSubmitAttempted(false)
+      setCityTouched(false)
 
-    suppressCityOpenRef.current = false
-    if (statePicked) setCityOpen(true)
-  }
+      suppressCityOpenRef.current = false
+      if (statePicked) setCityOpen(true)
+    },
+    [statePicked]
+  )
 
-  function pickCitySuggestion(s: CitySuggestion) {
+  const pickCitySuggestion = useCallback((s: CitySuggestion) => {
     suppressCityOpenRef.current = true
     setCityInput(s.display_name)
-    setCityValue(s.display_name)
 
     setCityNotListed(false)
     setCityOpen(false)
@@ -635,13 +654,14 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     setCityTouched(false)
     setSubmitAttempted(false)
-    setCityDecision(null)
-  }
+    setCityDecision('picked_from_list')
 
-  function chooseNotListed() {
+    setError(null)
+  }, [])
+
+  const chooseNotListed = useCallback(() => {
     suppressCityOpenRef.current = true
     setCityInput('')
-    setCityValue(null)
     setCityNotListed(true)
 
     setCityOpen(false)
@@ -650,12 +670,10 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setCityTouched(false)
     setSubmitAttempted(false)
     setCityDecision('leave_blank')
-  }
+  }, [])
 
-  function onCityEnterAnyway() {
+  const onCityEnterAnyway = useCallback(() => {
     suppressCityOpenRef.current = true
-    const typed = cityInput.trim()
-    setCityValue(typed || null)
 
     setCityOpen(false)
     setCityActiveIndex(-1)
@@ -664,21 +682,18 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
     setError(null)
     setSubmitAttempted(false)
     setCityTouched(false)
-  }
+  }, [])
 
-  function onCityPickFromList() {
+  const onCityPickFromList = useCallback(() => {
     setCityDecision('picked_from_list')
     setCityTouched(false)
     setSubmitAttempted(false)
 
     suppressCityOpenRef.current = false
     setCityOpen(true)
+    setCityActiveIndex(-1)
     setTimeout(() => cityInputRef.current?.focus(), 0)
-  }
-
-  function onCityLeaveBlank() {
-    chooseNotListed()
-  }
+  }, [])
 
   function onCityKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!statePicked || loading) return
@@ -785,15 +800,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
     const typed = cityInput.trim()
     const cityToSave =
-      cityNotListed
-        ? null
-        : !typed
-          ? null
-          : cityDecision === 'enter_anyway'
-            ? typed
-            : cityLooksValid
-              ? (cityValue?.trim() || typed)
-              : null
+      cityNotListed ? null : !typed ? null : cityDecision === 'enter_anyway' ? typed : cityLooksValid ? typed : null
 
     const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
@@ -913,8 +920,8 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
 
       {!handleValid && (
         <p className="text-sm text-red-600">
-          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4
-          letters/numbers, a dash, then 2–24 letters).
+          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a
+          dash, then 2–24 letters).
         </p>
       )}
 
@@ -1023,10 +1030,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
               onKeyDown={onCityKeyDown}
               placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
               disabled={!statePicked || loading}
-              className={[
-                inputClass,
-                !statePicked || loading ? 'opacity-60 cursor-not-allowed' : '',
-              ].join(' ')}
+              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
             />
 
             {statePicked && cityOpen && !loading && !cityNotListed && (
@@ -1054,8 +1058,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     }}
                     className={cityItemClass(cityActiveIndex === -1)}
                   >
-                    City not listed{' '}
-                    <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
+                    City not listed <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
                   </button>
 
                   <div className="h-px bg-gray-200" />
@@ -1064,9 +1067,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
                   ) : citySuggestions.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length
-                        ? 'No matches. Press Enter to use it anyway.'
-                        : 'Start typing to filter.'}
+                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'Start typing to filter.'}
                     </div>
                   ) : (
                     <>
@@ -1157,7 +1158,7 @@ export default function CreateDriverForm({ initialRaw }: { initialRaw: string })
                     <button
                       type="button"
                       className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
-                      onClick={onCityLeaveBlank}
+                      onClick={chooseNotListed}
                     >
                       Leave blank
                     </button>
