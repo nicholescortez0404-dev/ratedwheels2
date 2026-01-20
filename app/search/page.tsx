@@ -2,7 +2,8 @@ import SearchForm from './SearchForm'
 import ReviewForm from './ReviewForm'
 import CreateDriverForm from './CreateDriverForm'
 import SortSelect from './SortSelect'
-import { supabase } from '@/lib/supabaseClient'
+
+import { createSupabaseServerClient } from '@/lib/supabaseServer'
 
 type DriverStat = {
   driver_id: string
@@ -15,11 +16,42 @@ function formatAvg(avg: number | null | undefined) {
   return Number(avg).toFixed(1)
 }
 
+function timeAgo(dateIso: string) {
+  const now = Date.now()
+  const then = new Date(dateIso).getTime()
+  if (!Number.isFinite(then)) return ''
+
+  const diffSec = Math.max(0, Math.floor((now - then) / 1000))
+  const min = Math.floor(diffSec / 60)
+  const hr = Math.floor(min / 60)
+  const day = Math.floor(hr / 24)
+
+  if (diffSec < 60) return 'Just now'
+  if (min < 60) return `${min} min${min === 1 ? '' : 's'} ago`
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`
+  return `${day} day${day === 1 ? '' : 's'} ago`
+}
+
+function tagPillClass(category: string) {
+  const base = 'rounded-full border px-3 py-1 text-xs font-medium'
+  switch (String(category || '').toLowerCase()) {
+    case 'positive':
+      return `${base} border-green-600 bg-green-200 text-green-900`
+    case 'neutral':
+      return `${base} border-yellow-600 bg-yellow-200 text-yellow-900`
+    case 'negative':
+      return `${base} border-red-600 bg-red-200 text-red-900`
+    default:
+      return `${base} border-gray-400 bg-gray-200 text-gray-900`
+  }
+}
+
 export default async function SearchPage({
   searchParams,
 }: {
   searchParams: Promise<{ q?: string; sort?: string }>
 }) {
+  const supabase = createSupabaseServerClient()
   const sp = await searchParams
 
   const raw = (sp.q ?? '').trim()
@@ -38,6 +70,7 @@ export default async function SearchPage({
 
   // Trait aggregation
   const traitCounts = { positive: 0, neutral: 0, negative: 0 }
+
   const tagFreq: Record<
     string,
     { id: string; label: string; category: string; slug: string; count: number }
@@ -52,7 +85,7 @@ export default async function SearchPage({
   if (q) {
     const { data: d, error: driverErr } = await supabase
       .from('drivers')
-      .select('*')
+      .select('id, driver_handle, display_name, city, state, car_make, car_model, car_color')
       .eq('driver_handle', q)
       .maybeSingle()
 
@@ -175,10 +208,19 @@ export default async function SearchPage({
               <div>
                 <div className="text-xl font-semibold">{driver.display_name}</div>
                 <div className="text-gray-700">@{driver.driver_handle}</div>
+
                 <div className="text-gray-600">
                   {driver.city ?? '—'}
                   {driver.state ? `, ${driver.state}` : ''}
                 </div>
+
+                {(driver.car_color || driver.car_make || driver.car_model) && (
+                  <div className="text-gray-600">
+                    {[driver.car_color, driver.car_make, driver.car_model]
+                      .filter(Boolean)
+                      .join(' ')}
+                  </div>
+                )}
               </div>
 
               <div className="text-right">
@@ -223,8 +265,8 @@ export default async function SearchPage({
                           key === 'positive'
                             ? 'bg-green-500'
                             : key === 'neutral'
-                            ? 'bg-yellow-500'
-                            : 'bg-red-500',
+                              ? 'bg-yellow-500'
+                              : 'bg-red-500',
                         ].join(' ')}
                         style={{ width: `${pct}%` }}
                       />
@@ -285,7 +327,7 @@ export default async function SearchPage({
                       <div className="flex items-center justify-between gap-4">
                         <div className="text-sm font-semibold">Rating: {r.stars}/5</div>
                         <div className="text-xs text-gray-600">
-                          {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
+                          {r.created_at ? `Posted ${timeAgo(r.created_at)}` : ''}
                         </div>
                       </div>
 
@@ -298,10 +340,7 @@ export default async function SearchPage({
                       {tagList.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {tagList.map((t: any) => (
-                            <span
-                              key={t.id}
-                              className="rounded-full border border-gray-300 bg-white/50 px-3 py-1 text-xs text-gray-900"
-                            >
+                            <span key={t.id} className={tagPillClass(t.category)}>
                               {t.label}
                             </span>
                           ))}
