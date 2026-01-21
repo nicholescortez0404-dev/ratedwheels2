@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { useEnterToNext } from '@/lib/useEnterToNext'
 
 /* -------------------- types -------------------- */
 
@@ -179,6 +180,28 @@ export default function CreateDriverForm({
   const handle = useMemo(() => normalizeHandle(initialRaw), [initialRaw])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
 
+  // ✅ Enter-to-next refs (order matters)
+  const displayNameRef = useRef<HTMLInputElement | null>(null)
+  const carColorRef = useRef<HTMLInputElement | null>(null)
+  const carMakeRef = useRef<HTMLInputElement | null>(null)
+  const carModelRef = useRef<HTMLInputElement | null>(null)
+  const stateRef = useRef<HTMLInputElement | null>(null)
+  const starsRef = useRef<HTMLSelectElement | null>(null)
+  const commentRef = useRef<HTMLTextAreaElement | null>(null)
+  const submitRef = useRef<HTMLButtonElement | null>(null)
+
+  const enterNext = useEnterToNext([
+    displayNameRef,
+    carColorRef,
+    carMakeRef,
+    carModelRef,
+    stateRef,
+    // city is special (dropdown + decision gate) so we don't include it here
+    starsRef,
+    commentRef,
+    submitRef,
+  ])
+
   // driver fields
   const [displayName, setDisplayName] = useState(initialRaw.trim())
   const [carColor, setCarColor] = useState(initialCarColor ?? '')
@@ -212,6 +235,16 @@ export default function CreateDriverForm({
 
   const suppressCityOpenRef = useRef(false)
   const cityFetchId = useRef(0)
+
+  // ✅ NEW: prevent city dropdown being open immediately on redirect
+  const didMountRef = useRef(false)
+  useEffect(() => {
+    didMountRef.current = true
+    // force-closed on mount (safety)
+    suppressCityOpenRef.current = true
+    setCityOpen(false)
+    setCityActiveIndex(-1)
+  }, [])
 
   // Mobile tap vs scroll guard (STATE + CITY)
   const touchStartYRef = useRef(0)
@@ -459,12 +492,13 @@ export default function CreateDriverForm({
     [resetCity, error]
   )
 
+  // ✅ UPDATED: commitState now focuses city but does NOT auto-open dropdown (prevents open-on-redirect vibe)
   const commitState = useCallback(
     (code: string) => {
       pickState(code)
       setTimeout(() => {
         cityInputRef.current?.focus()
-        setCityOpen(true)
+        // do NOT setCityOpen(true) here
       }, 0)
     },
     [pickState]
@@ -518,9 +552,17 @@ export default function CreateDriverForm({
       return
     }
 
+    // ✅ UPDATED: Enter = commit state then move focus to City (Next behavior)
     if (e.key === 'Enter' || e.key === 'Tab') {
       const raw = stateInput.trim()
-      if (!raw) return
+      if (!raw) {
+        if (e.key === 'Enter') {
+          // if blank, treat Enter as "Next"
+          e.preventDefault()
+          cityInputRef.current?.focus()
+        }
+        return
+      }
 
       const upper = raw.toUpperCase()
 
@@ -562,6 +604,10 @@ export default function CreateDriverForm({
       return
     }
     if (cityNotListed) return
+
+    // ✅ NEW: don't auto-open/fetch on first mount
+    if (!didMountRef.current) return
+
     if (suppressCityOpenRef.current && !cityOpen) return
 
     const q = cityInput.trim()
@@ -657,6 +703,9 @@ export default function CreateDriverForm({
     setCityDecision('picked_from_list')
 
     setError(null)
+
+    // ✅ NEW: after picking city, go to Rating
+    setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
   const chooseNotListed = useCallback(() => {
@@ -670,6 +719,9 @@ export default function CreateDriverForm({
     setCityTouched(false)
     setSubmitAttempted(false)
     setCityDecision('leave_blank')
+
+    // ✅ NEW: choosing not listed is a decision; go next
+    setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
   const onCityEnterAnyway = useCallback(() => {
@@ -682,6 +734,9 @@ export default function CreateDriverForm({
     setError(null)
     setSubmitAttempted(false)
     setCityTouched(false)
+
+    // ✅ NEW: decision made; go next
+    setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
   const onCityPickFromList = useCallback(() => {
@@ -701,6 +756,18 @@ export default function CreateDriverForm({
     const hasMenu = cityOpen && !cityNotListed
     const anyResults = citySuggestions.length > 0
     const maxIdx = anyResults ? citySuggestions.length - 1 : -1
+
+    // ✅ NEW: Enter on city (when menu closed) should move to next field
+    if (!cityOpen && e.key === 'Enter') {
+      e.preventDefault()
+      // if there is typed city and it’s invalid and needs decision, trigger banner logic
+      if (cityInput.trim().length > 0 && !cityNotListed && !cityLooksValid && !cityDecision) {
+        setSubmitAttempted(true)
+        return
+      }
+      starsRef.current?.focus()
+      return
+    }
 
     if (e.key === 'Tab') {
       if (cityOpen) {
@@ -768,6 +835,9 @@ export default function CreateDriverForm({
         suppressCityOpenRef.current = true
         setCityOpen(false)
         setCityActiveIndex(-1)
+
+        // if no selection, treat as next
+        starsRef.current?.focus()
       }
     }
   }
@@ -912,7 +982,18 @@ export default function CreateDriverForm({
     citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   return (
-    <form onSubmit={onCreateAndReview} className="space-y-4">
+    <form
+      onSubmit={onCreateAndReview}
+      className="space-y-4"
+      // ✅ NEW: prevent Enter from submitting early anywhere except textarea + submit button
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return
+        const el = e.target as Element | null
+        if (el instanceof HTMLTextAreaElement) return
+        if (el instanceof HTMLButtonElement && el.type === 'submit') return
+        e.preventDefault()
+      }}
+    >
       <p className="text-gray-900">
         We couldn’t find this driver yet. Be the first to create and review{' '}
         <span className="font-semibold">@{handle}</span>.
@@ -927,8 +1008,10 @@ export default function CreateDriverForm({
 
       <div className="space-y-3">
         <input
+          ref={displayNameRef}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
+          onKeyDown={enterNext}
           placeholder="Display name (ex: Tom (4839))"
           className={inputClass}
           disabled={loading}
@@ -936,22 +1019,37 @@ export default function CreateDriverForm({
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <input
+            ref={carColorRef}
             value={carColor}
             onChange={(e) => setCarColor(e.target.value)}
+            onKeyDown={enterNext}
             placeholder="Car color (optional) — ex: Silver"
             className={inputClass}
             disabled={loading}
           />
           <input
+            ref={carMakeRef}
             value={carMake}
             onChange={(e) => setCarMake(e.target.value)}
+            onKeyDown={enterNext}
             placeholder="Car make (optional) — ex: Toyota"
             className={inputClass}
             disabled={loading}
           />
           <input
+            ref={carModelRef}
             value={carModel}
             onChange={(e) => setCarModel(e.target.value)}
+            onKeyDown={(e) => {
+              // last of this row -> go to state
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                stateRef.current?.focus()
+                setStateOpen(true)
+                return
+              }
+              enterNext(e)
+            }}
             placeholder="Car model (optional) — ex: RAV4 Hybrid"
             className={inputClass}
             disabled={loading}
@@ -962,6 +1060,7 @@ export default function CreateDriverForm({
           {/* STATE */}
           <div ref={stateBoxRef} className="relative w-40">
             <input
+              ref={stateRef}
               value={stateInput}
               onChange={(e) => onStateChange(e.target.value)}
               onFocus={() => setStateOpen(true)}
@@ -1175,8 +1274,18 @@ export default function CreateDriverForm({
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
           <select
+            ref={starsRef}
             value={stars}
             onChange={(e) => setStars(Number(e.target.value))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                // go to comment
+                commentRef.current?.focus()
+                return
+              }
+              enterNext(e)
+            }}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
             disabled={loading}
           >
@@ -1199,6 +1308,7 @@ export default function CreateDriverForm({
         <div className="space-y-2">
           <div className="relative">
             <textarea
+              ref={commentRef}
               value={comment}
               onChange={(e) => {
                 const v = e.target.value
@@ -1231,8 +1341,8 @@ export default function CreateDriverForm({
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to{' '}
-              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
+              continue.
             </p>
           )}
 
@@ -1245,6 +1355,7 @@ export default function CreateDriverForm({
       {error && <p className="text-red-600">{error}</p>}
 
       <button
+        ref={submitRef}
         type="submit"
         disabled={loading || overLimit || !statePicked || !handleValid}
         className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
