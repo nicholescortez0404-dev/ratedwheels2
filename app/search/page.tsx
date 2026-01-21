@@ -27,6 +27,27 @@ type DriverRow = {
   car_model: string | null
 }
 
+type TagRow = {
+  id: string
+  label: string
+  category: string
+  slug: string
+}
+
+type ReviewTagJoin = {
+  tag: TagRow | null
+}
+
+type ReviewRow = {
+  id: string
+  driver_id: string
+  reviewer_id: string | null
+  stars: number
+  comment: string | null
+  created_at: string | null
+  review_tags: ReviewTagJoin[] | null
+}
+
 function formatAvg(avg: number | null | undefined) {
   if (avg === null || avg === undefined || Number.isNaN(avg)) return '—'
   return Number(avg).toFixed(1)
@@ -37,13 +58,11 @@ function normalizeHandle(raw: string) {
 }
 
 function isPlateLeadingQuery(q: string) {
-  // "7483" OR "7483-m" OR "7483-mi" OR "7483-mike" => true
-  // Anything else => false
   return /^\d{4}($|[-].*)/.test(q)
 }
 
 function escapeIlikeLiteral(s: string) {
-  // Supabase ilike supports % and _ wildcards; escape literal % and _ so user input can’t act like a wildcard
+  // Escape %, _, and \ for ilike patterns
   return s.replace(/[%_\\]/g, (m) => `\\${m}`)
 }
 
@@ -71,7 +90,6 @@ export default async function SearchPage({
   const raw = (sp.q ?? '').trim()
   const q = normalizeHandle(raw)
 
-  // Optional params (used for autofill if driver not found / narrowing suggestions)
   const initialState = String(sp.state ?? '').trim().toUpperCase()
   const initialCity = String(sp.city ?? '').trim()
   const initialCarColor = String(sp.car_color ?? '').trim()
@@ -85,37 +103,54 @@ export default async function SearchPage({
     Boolean(initialCarMake) ||
     Boolean(initialCarModel)
 
-  // sorting
   const allowedSorts = new Set(['newest', 'oldest', 'highest', 'lowest'])
   const sortParam = String(sp.sort ?? 'newest').toLowerCase()
   const sortMode = allowedSorts.has(sortParam) ? sortParam : 'newest'
 
   let driver: DriverRow | null = null
-  let reviews: any[] = []
+  let reviews: ReviewRow[] = []
   let avgStars: number | null = null
   let reviewCount = 0
 
-  // Trait aggregation
-  const traitCounts = { positive: 0, neutral: 0, negative: 0 }
-  const tagFreq: Record<string, { id: string; label: string; category: string; slug: string; count: number }> = {}
-
-  const tagsByCategory = {
-    positive: [] as { label: string; count: number }[],
-    neutral: [] as { label: string; count: number }[],
-    negative: [] as { label: string; count: number }[],
+  const traitCounts: Record<'positive' | 'neutral' | 'negative', number> = {
+    positive: 0,
+    neutral: 0,
+    negative: 0,
   }
 
-  // Suggestions for plate-leading partial searches (ONLY when exact not found AND disambiguator present)
+  const tagFreq: Record<
+    string,
+    { id: string; label: string; category: string; slug: string; count: number }
+  > = {}
+
+  const tagsByCategory: Record<'positive' | 'neutral' | 'negative', { label: string; count: number }[]> = {
+    positive: [],
+    neutral: [],
+    negative: [],
+  }
+
+  // Suggestions for plate-leading partial searches:
+  // ONLY when exact not found AND disambiguator present
   let suggestions: DriverRow[] = []
-  const shouldPromptForDisambiguator = Boolean(q) && !driver && isPlateLeadingQuery(q) && !hasDisambiguator
+
+  // This message is shown when user typed plate-leading but gave NO disambiguators
+  // (and exact match failed)
+  let shouldPromptForDisambiguator = false
 
   if (q) {
-    // 1) Always attempt exact match first
-    const { data: d } = await supabase.from('drivers').select('*').eq('driver_handle', q).maybeSingle()
+    // 1) Exact match first
+    const { data: d } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('driver_handle', q)
+      .maybeSingle()
+
     driver = (d as DriverRow | null) ?? null
 
-    // 2) If exact not found, AND query starts with a 4-digit plate, AND user provided ANY disambiguator,
-    // then do prefix suggestions narrowed by disambiguators.
+    // decide prompt AFTER we know exact didn't match
+    shouldPromptForDisambiguator = Boolean(q) && !driver && isPlateLeadingQuery(q) && !hasDisambiguator
+
+    // 2) Suggestions only if plate-leading AND has disambiguator
     if (!driver && isPlateLeadingQuery(q) && hasDisambiguator) {
       let sq = supabase
         .from('drivers')
@@ -123,27 +158,17 @@ export default async function SearchPage({
         .ilike('driver_handle', safeIlikePatternPrefix(q))
         .limit(25)
 
-      // Disambiguators ONLY NARROW (never broaden)
       if (initialState) sq = sq.eq('state', initialState)
-
-      if (initialCity) {
-        sq = sq.ilike('city', `%${escapeIlikeLiteral(initialCity)}%`)
-      }
-      if (initialCarColor) {
-        sq = sq.ilike('car_color', `%${escapeIlikeLiteral(initialCarColor)}%`)
-      }
-      if (initialCarMake) {
-        sq = sq.ilike('car_make', `%${escapeIlikeLiteral(initialCarMake)}%`)
-      }
-      if (initialCarModel) {
-        sq = sq.ilike('car_model', `%${escapeIlikeLiteral(initialCarModel)}%`)
-      }
+      if (initialCity) sq = sq.ilike('city', `%${escapeIlikeLiteral(initialCity)}%`)
+      if (initialCarColor) sq = sq.ilike('car_color', `%${escapeIlikeLiteral(initialCarColor)}%`)
+      if (initialCarMake) sq = sq.ilike('car_make', `%${escapeIlikeLiteral(initialCarMake)}%`)
+      if (initialCarModel) sq = sq.ilike('car_model', `%${escapeIlikeLiteral(initialCarModel)}%`)
 
       const { data: s } = await sq
       suggestions = (s as DriverRow[] | null) ?? []
     }
 
-    // 3) If we found the driver, proceed with stats + reviews logic
+    // 3) If found driver -> stats + reviews + tags
     if (driver?.id) {
       const { data: statRow } = await supabase
         .from('driver_stats')
@@ -154,7 +179,6 @@ export default async function SearchPage({
       avgStars = (statRow as DriverStat | null)?.avg_stars ?? null
       reviewCount = (statRow as DriverStat | null)?.review_count ?? 0
 
-      // reviews (sorted)
       let rq = supabase
         .from('reviews')
         .select(
@@ -184,19 +208,18 @@ export default async function SearchPage({
       } else if (sortMode === 'oldest') {
         rq = rq.order('created_at', { ascending: true })
       } else {
-        rq = rq.order('created_at', { ascending: false }) // newest
+        rq = rq.order('created_at', { ascending: false })
       }
 
       const { data: r } = await rq
-      reviews = r ?? []
+      reviews = (r as ReviewRow[] | null) ?? []
 
-      // Aggregate traits + tag frequency
-      for (const rev of reviews as any[]) {
+      for (const rev of reviews) {
         for (const rt of rev.review_tags ?? []) {
           const tag = rt?.tag
           if (!tag) continue
 
-          const cat = String(tag?.category ?? '').trim().toLowerCase()
+          const cat = String(tag.category ?? '').trim().toLowerCase()
           if (cat === 'positive' || cat === 'neutral' || cat === 'negative') {
             traitCounts[cat]++
           }
@@ -214,11 +237,11 @@ export default async function SearchPage({
         }
       }
 
-      Object.values(tagFreq).forEach((t) => {
+      for (const t of Object.values(tagFreq)) {
         if (t.category === 'positive' || t.category === 'neutral' || t.category === 'negative') {
           tagsByCategory[t.category].push({ label: t.label, count: t.count })
         }
-      })
+      }
 
       tagsByCategory.positive.sort((a, b) => b.count - a.count)
       tagsByCategory.neutral.sort((a, b) => b.count - a.count)
@@ -312,7 +335,7 @@ export default async function SearchPage({
                   ['negative', 'Negative'] as const,
                 ] as const
               ).map(([key, label]) => {
-                const val = (traitCounts as any)[key] as number
+                const val = traitCounts[key]
                 const pct = Math.round((val / maxTrait) * 100)
 
                 return (
@@ -376,10 +399,16 @@ export default async function SearchPage({
             ) : (
               <ul className="mt-3 space-y-3">
                 {reviews.map((r) => {
-                  const tagList = (r.review_tags ?? []).map((rt: any) => rt?.tag).filter(Boolean)
+                  const tagList = (r.review_tags ?? [])
+                    .map((rt) => rt?.tag)
+                    .filter((t): t is TagRow => Boolean(t))
 
                   return (
-                    <li key={r.id} id={`review-${r.id}`} className="rounded-2xl border border-gray-300 bg-transparent p-5">
+                    <li
+                      key={r.id}
+                      id={`review-${r.id}`}
+                      className="rounded-2xl border border-gray-300 bg-transparent p-5"
+                    >
                       <div className="flex items-center justify-between gap-4">
                         <div className="text-sm font-semibold">Rating: {r.stars}/5</div>
                         <div className="text-xs text-gray-600">
@@ -395,7 +424,7 @@ export default async function SearchPage({
 
                       {tagList.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {tagList.map((t: any) => (
+                          {tagList.map((t) => (
                             <span
                               key={t.id}
                               className="rounded-full border border-gray-300 bg-white/50 px-3 py-1 text-xs text-gray-900"
@@ -413,7 +442,6 @@ export default async function SearchPage({
           </div>
         </section>
       ) : suggestions.length > 0 ? (
-        // Suggestions view (exact not found, plate-leading + disambiguator produced candidates)
         <section className="mt-8 space-y-4">
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="text-lg font-semibold">Did you mean one of these?</div>
@@ -478,7 +506,6 @@ export default async function SearchPage({
           </div>
         </section>
       ) : (
-        // Exact not found and no suggestions
         <section className="mt-8 space-y-4">
           {shouldPromptForDisambiguator && (
             <div className="rounded-lg border border-gray-300 bg-white/40 p-4">

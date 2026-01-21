@@ -1,8 +1,7 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-
 import { supabase } from '@/lib/supabaseClient'
 
 type TagRow = {
@@ -12,6 +11,8 @@ type TagRow = {
   category: 'positive' | 'neutral' | 'negative' | string
   is_active?: boolean
 }
+
+type JsonObject = Record<string, unknown>
 
 const MAX_COMMENT_CHARS = 500
 
@@ -43,6 +44,14 @@ const TAG_PRIORITY: Record<string, number> = {
   'good-navigation': 8,
 }
 
+function isJsonObject(v: unknown): v is JsonObject {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function errorMessage(e: unknown, fallback: string) {
+  return e instanceof Error ? e.message : fallback
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
@@ -60,6 +69,64 @@ async function scrollToReviewId(reviewId: string) {
     await sleep(50)
   }
   return false
+}
+
+// Chip styling: readable on cream + category colors when selected
+function chipClass(category: string, selected: boolean) {
+  const base =
+    'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30'
+
+  if (!selected) {
+    return `${base} bg-transparent border-gray-300 text-gray-900 hover:border-gray-600`
+  }
+
+  switch (String(category || '').toLowerCase()) {
+    case 'positive':
+      return `${base} bg-green-200 border-green-600 text-green-900`
+    case 'neutral':
+      return `${base} bg-yellow-200 border-yellow-600 text-yellow-900`
+    case 'negative':
+      return `${base} bg-red-200 border-red-600 text-red-900`
+    default:
+      return `${base} bg-gray-200 border-gray-600 text-gray-900`
+  }
+}
+
+function TagGroup({
+  title,
+  list,
+  selectedTagIds,
+  toggleTag,
+}: {
+  title: string
+  list: TagRow[]
+  selectedTagIds: Set<string>
+  toggleTag: (id: string) => void
+}) {
+  if (!list || list.length === 0) return null
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
+
+      <div className="flex flex-wrap gap-2">
+        {list.map((t) => {
+          const selected = selectedTagIds.has(t.id)
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => toggleTag(t.id)}
+              className={chipClass(t.category, selected)}
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export default function ReviewForm({ driverId }: { driverId: string }) {
@@ -84,17 +151,16 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     let mounted = true
 
     ;(async () => {
-      const { data, error } = await supabase
+      const { data, error: tagErr } = await supabase
         .from('tags')
         .select('id,label,slug,category,is_active')
         .or('is_active.is.null,is_active.eq.true')
         .order('sort_order', { ascending: true })
 
-
       if (!mounted) return
 
-      if (error) {
-        setError(error.message)
+      if (tagErr) {
+        setError(tagErr.message)
         return
       }
 
@@ -106,20 +172,21 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
   }, [])
 
- // After refresh: show toast + scroll to last posted review
-useEffect(() => {
-  const last = sessionStorage.getItem('rw:lastPostedReviewId')
-  if (!last) return
+  // After refresh: show toast + scroll to last posted review
+  useEffect(() => {
+    const last = sessionStorage.getItem('rw:lastPostedReviewId')
+    if (!last) return
 
-  // ✅ show success toast even after redirect from CreateDriverForm
-  setToast('Review posted!')
+    // ✅ avoid "setState synchronously within effect"
+    const t = setTimeout(() => setToast('Review posted!'), 0)
 
-  ;(async () => {
-    await scrollToReviewId(last)
-    sessionStorage.removeItem('rw:lastPostedReviewId')
-  })()
-}, [])
+    ;(async () => {
+      await scrollToReviewId(last)
+      sessionStorage.removeItem('rw:lastPostedReviewId')
+    })()
 
+    return () => clearTimeout(t)
+  }, [])
 
   // Toast auto-hide
   useEffect(() => {
@@ -154,41 +221,18 @@ useEffect(() => {
     return byCat
   }, [tags])
 
-  function toggleTag(id: string) {
+  const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
-
-  // Chip styling: readable on cream + category colors when selected
-  function chipClass(category: string, selected: boolean) {
-    const base =
-      'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
-      'focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30'
-
-    if (!selected) {
-      return `${base} bg-transparent border-gray-300 text-gray-900 hover:border-gray-600`
-    }
-
-    switch (String(category || '').toLowerCase()) {
-      case 'positive':
-        return `${base} bg-green-200 border-green-600 text-green-900`
-      case 'neutral':
-        return `${base} bg-yellow-200 border-yellow-600 text-yellow-900`
-      case 'negative':
-        return `${base} bg-red-200 border-red-600 text-red-900`
-      default:
-        return `${base} bg-gray-200 border-gray-600 text-gray-900`
-    }
-  }
+  }, [])
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
 
-    // If over limit, do not submit.
     if (overLimit) {
       setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
       return
@@ -211,15 +255,18 @@ useEffect(() => {
         }),
       })
 
-      const json = await res.json().catch(() => ({}))
+      const jsonUnknown: unknown = await res.json().catch(() => ({}))
+      const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
 
       if (!res.ok) {
+        const apiErr = typeof json.error === 'string' ? json.error : 'Failed to post review.'
         setLoading(false)
-        setError(json?.error || 'Failed to post review.')
+        setError(apiErr)
         return
       }
 
-      const newReviewId = json?.review?.id as string | undefined
+      const reviewObj = isJsonObject(json.review) ? json.review : null
+      const newReviewId = typeof reviewObj?.id === 'string' ? reviewObj.id : undefined
 
       // Reset form immediately
       setComment('')
@@ -243,36 +290,10 @@ useEffect(() => {
       if (newReviewId) {
         scrollToReviewId(newReviewId)
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false)
-      setError(err?.message || 'Failed to post review.')
+      setError(errorMessage(err, 'Failed to post review.'))
     }
-  }
-
-  const TagGroup = ({ title, list }: { title: string; list: TagRow[] }) => {
-    if (!list || list.length === 0) return null
-
-    return (
-      <div className="space-y-2">
-        <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
-
-        <div className="flex flex-wrap gap-2">
-          {list.map((t) => {
-            const selected = selectedTagIds.has(t.id)
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => toggleTag(t.id)}
-                className={chipClass(t.category, selected)}
-              >
-                {t.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -302,9 +323,9 @@ useEffect(() => {
 
         <div className="space-y-4">
           <div className="text-gray-900 font-medium">Tags</div>
-          <TagGroup title="Positive" list={grouped.positive ?? []} />
-          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
-          <TagGroup title="Negative" list={grouped.negative ?? []} />
+          <TagGroup title="Positive" list={grouped.positive ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
+          <TagGroup title="Negative" list={grouped.negative ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
         </div>
 
         {/* Comment box with counter + red state when over */}
@@ -329,20 +350,14 @@ useEffect(() => {
               ].join(' ')}
             />
 
-            <div
-              className={[
-                'absolute bottom-2 right-3 text-xs tabular-nums',
-                overLimit ? 'text-red-600' : 'text-gray-600',
-              ].join(' ')}
-            >
+            <div className={['absolute bottom-2 right-3 text-xs tabular-nums', overLimit ? 'text-red-600' : 'text-gray-600'].join(' ')}>
               {commentCount}/{MAX_COMMENT_CHARS}
             </div>
           </div>
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to{' '}
-              <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { useEnterToNext } from '@/lib/useEnterToNext'
@@ -18,8 +18,8 @@ type TagRow = {
 type CitySuggestionRow = { name: string; display_name: string }
 
 type CitySuggestion = {
-  name: string // raw db/census name (kept for future use)
-  display_name: string // cleaned label to show
+  name: string
+  display_name: string
 }
 
 type InsertedDriver = { id: string; driver_handle: string }
@@ -32,6 +32,8 @@ type Props = {
   initialCarMake?: string | null
   initialCarModel?: string | null
 }
+
+type JsonObject = Record<string, unknown>
 
 /* -------------------- constants -------------------- */
 
@@ -124,6 +126,14 @@ const TAG_PRIORITY: Record<string, number> = {
 
 /* -------------------- helpers -------------------- */
 
+function isJsonObject(v: unknown): v is JsonObject {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function errorMessage(e: unknown, fallback: string) {
+  return e instanceof Error ? e.message : fallback
+}
+
 function normalizeHandle(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, '-')
 }
@@ -157,11 +167,63 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <span className="font-semibold underline underline-offset-2">
-        {text.slice(idx, idx + query.length)}
-      </span>
+      <span className="font-semibold underline underline-offset-2">{text.slice(idx, idx + query.length)}</span>
       {text.slice(idx + query.length)}
     </>
+  )
+}
+
+// Chip styling (outside render)
+function chipClass(category: string, selected: boolean) {
+  const base =
+    'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30'
+
+  if (!selected) return `${base} bg-transparent border-gray-300 text-gray-900 hover:border-gray-600`
+
+  switch (String(category || '').toLowerCase()) {
+    case 'positive':
+      return `${base} bg-green-200 border-green-600 text-green-900`
+    case 'neutral':
+      return `${base} bg-yellow-200 border-yellow-600 text-yellow-900`
+    case 'negative':
+      return `${base} bg-red-200 border-red-600 text-red-900`
+    default:
+      return `${base} bg-gray-200 border-gray-600 text-gray-900`
+  }
+}
+
+function TagGroup({
+  title,
+  list,
+  selectedTagIds,
+  toggleTag,
+}: {
+  title: string
+  list: TagRow[]
+  selectedTagIds: Set<string>
+  toggleTag: (id: string) => void
+}) {
+  if (!list || list.length === 0) return null
+  return (
+    <div className="space-y-2">
+      <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
+      <div className="flex flex-wrap gap-2">
+        {list.map((t) => {
+          const selected = selectedTagIds.has(t.id)
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => toggleTag(t.id)}
+              className={chipClass(t.category, selected)}
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -236,17 +298,16 @@ export default function CreateDriverForm({
   const suppressCityOpenRef = useRef(false)
   const cityFetchId = useRef(0)
 
-  // ✅ NEW: prevent city dropdown being open immediately on redirect
+  // ✅ prevent city dropdown being open immediately on redirect
   const didMountRef = useRef(false)
   useEffect(() => {
     didMountRef.current = true
-    // force-closed on mount (safety)
     suppressCityOpenRef.current = true
     setCityOpen(false)
     setCityActiveIndex(-1)
   }, [])
 
-  // Mobile tap vs scroll guard (STATE + CITY)
+  // Mobile tap vs scroll guard
   const touchStartYRef = useRef(0)
   const touchMovedRef = useRef(false)
 
@@ -431,50 +492,6 @@ export default function CreateDriverForm({
     })
   }, [])
 
-  // Chip styling
-  function chipClass(category: string, selected: boolean) {
-    const base =
-      'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
-      'focus:outline-none focus-visible:ring-2 focus-visible:ring-black/30'
-
-    if (!selected) return `${base} bg-transparent border-gray-300 text-gray-900 hover:border-gray-600`
-
-    switch (String(category || '').toLowerCase()) {
-      case 'positive':
-        return `${base} bg-green-200 border-green-600 text-green-900`
-      case 'neutral':
-        return `${base} bg-yellow-200 border-yellow-600 text-yellow-900`
-      case 'negative':
-        return `${base} bg-red-200 border-red-600 text-red-900`
-      default:
-        return `${base} bg-gray-200 border-gray-600 text-gray-900`
-    }
-  }
-
-  const TagGroup = ({ title, list }: { title: string; list: TagRow[] }) => {
-    if (!list || list.length === 0) return null
-    return (
-      <div className="space-y-2">
-        <div className="text-xs tracking-widest text-gray-600 uppercase">{title}</div>
-        <div className="flex flex-wrap gap-2">
-          {list.map((t) => {
-            const selected = selectedTagIds.has(t.id)
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => toggleTag(t.id)}
-                className={chipClass(t.category, selected)}
-              >
-                {t.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
-
   const pickState = useCallback(
     (code: string) => {
       const up = code.toUpperCase().trim()
@@ -492,13 +509,12 @@ export default function CreateDriverForm({
     [resetCity, error]
   )
 
-  // ✅ UPDATED: commitState now focuses city but does NOT auto-open dropdown (prevents open-on-redirect vibe)
+  // commitState focuses city but does NOT auto-open dropdown
   const commitState = useCallback(
     (code: string) => {
       pickState(code)
       setTimeout(() => {
         cityInputRef.current?.focus()
-        // do NOT setCityOpen(true) here
       }, 0)
     },
     [pickState]
@@ -552,12 +568,10 @@ export default function CreateDriverForm({
       return
     }
 
-    // ✅ UPDATED: Enter = commit state then move focus to City (Next behavior)
     if (e.key === 'Enter' || e.key === 'Tab') {
       const raw = stateInput.trim()
       if (!raw) {
         if (e.key === 'Enter') {
-          // if blank, treat Enter as "Next"
           e.preventDefault()
           cityInputRef.current?.focus()
         }
@@ -605,9 +619,7 @@ export default function CreateDriverForm({
     }
     if (cityNotListed) return
 
-    // ✅ NEW: don't auto-open/fetch on first mount
     if (!didMountRef.current) return
-
     if (suppressCityOpenRef.current && !cityOpen) return
 
     const q = cityInput.trim()
@@ -703,8 +715,6 @@ export default function CreateDriverForm({
     setCityDecision('picked_from_list')
 
     setError(null)
-
-    // ✅ NEW: after picking city, go to Rating
     setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
@@ -720,7 +730,6 @@ export default function CreateDriverForm({
     setSubmitAttempted(false)
     setCityDecision('leave_blank')
 
-    // ✅ NEW: choosing not listed is a decision; go next
     setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
@@ -735,7 +744,6 @@ export default function CreateDriverForm({
     setSubmitAttempted(false)
     setCityTouched(false)
 
-    // ✅ NEW: decision made; go next
     setTimeout(() => starsRef.current?.focus(), 0)
   }, [])
 
@@ -757,10 +765,8 @@ export default function CreateDriverForm({
     const anyResults = citySuggestions.length > 0
     const maxIdx = anyResults ? citySuggestions.length - 1 : -1
 
-    // ✅ NEW: Enter on city (when menu closed) should move to next field
     if (!cityOpen && e.key === 'Enter') {
       e.preventDefault()
-      // if there is typed city and it’s invalid and needs decision, trigger banner logic
       if (cityInput.trim().length > 0 && !cityNotListed && !cityLooksValid && !cityDecision) {
         setSubmitAttempted(true)
         return
@@ -835,8 +841,6 @@ export default function CreateDriverForm({
         suppressCityOpenRef.current = true
         setCityOpen(false)
         setCityActiveIndex(-1)
-
-        // if no selection, treat as next
         starsRef.current?.focus()
       }
     }
@@ -902,8 +906,8 @@ export default function CreateDriverForm({
       const nextHandle = row?.driver_handle ?? handle
       router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
       router.refresh()
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create driver.')
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to create driver.'))
     } finally {
       setLoading(false)
     }
@@ -935,20 +939,25 @@ export default function CreateDriverForm({
         body: JSON.stringify({ driverId: row.id, stars, comment, tagIds }),
       })
 
-      const json = await res.json().catch(() => ({}))
+      const jsonUnknown: unknown = await res.json().catch(() => ({}))
+      const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
+
       if (!res.ok) {
-        setError(json?.error || 'Driver created, but review failed to post.')
+        const apiErr = typeof json.error === 'string' ? json.error : 'Driver created, but review failed to post.'
+        setError(apiErr)
         setLoading(false)
         return
       }
 
-      const newReviewId = json?.review?.id as string | undefined
+      // safely read new review id
+      const reviewObj = isJsonObject(json.review) ? json.review : null
+      const newReviewId = typeof reviewObj?.id === 'string' ? reviewObj.id : undefined
       if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
 
       router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
       router.refresh()
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create driver and post review.')
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to create driver and post review.'))
     } finally {
       setLoading(false)
     }
@@ -961,31 +970,26 @@ export default function CreateDriverForm({
   const stateDropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  const cityDropdownClass =
-    'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
+  const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const stateItemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
+    ['w-full text-left px-3 py-2 text-sm transition', active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100'].join(
+      ' '
+    )
 
   const cityItemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
+    ['w-full text-left px-3 py-2 text-sm transition', active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100'].join(
+      ' '
+    )
 
-  const showLoadMoreCities =
-    citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
+  const showLoadMoreCities = citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   return (
     <form
       onSubmit={onCreateAndReview}
       className="space-y-4"
-      // ✅ NEW: prevent Enter from submitting early anywhere except textarea + submit button
       onKeyDown={(e) => {
         if (e.key !== 'Enter') return
         const el = e.target as Element | null
@@ -995,14 +999,13 @@ export default function CreateDriverForm({
       }}
     >
       <p className="text-gray-900">
-        We couldn’t find this driver yet. Be the first to create and review{' '}
-        <span className="font-semibold">@{handle}</span>.
+        We couldn’t find this driver yet. Be the first to create and review <span className="font-semibold">@{handle}</span>.
       </p>
 
       {!handleValid && (
         <p className="text-sm text-red-600">
-          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a
-          dash, then 2–24 letters).
+          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a dash,
+          then 2–24 letters).
         </p>
       )}
 
@@ -1041,7 +1044,6 @@ export default function CreateDriverForm({
             value={carModel}
             onChange={(e) => setCarModel(e.target.value)}
             onKeyDown={(e) => {
-              // last of this row -> go to state
               if (e.key === 'Enter') {
                 e.preventDefault()
                 stateRef.current?.focus()
@@ -1238,27 +1240,15 @@ export default function CreateDriverForm({
                   </div>
 
                   <div className="flex flex-wrap gap-2 sm:shrink-0">
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md bg-black text-white text-sm"
-                      onClick={onCityEnterAnyway}
-                    >
+                    <button type="button" className="px-3 py-2 rounded-md bg-black text-white text-sm" onClick={onCityEnterAnyway}>
                       Enter anyway
                     </button>
 
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
-                      onClick={onCityPickFromList}
-                    >
+                    <button type="button" className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm" onClick={onCityPickFromList}>
                       Pick from list
                     </button>
 
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
-                      onClick={chooseNotListed}
-                    >
+                    <button type="button" className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm" onClick={chooseNotListed}>
                       Leave blank
                     </button>
                   </div>
@@ -1280,7 +1270,6 @@ export default function CreateDriverForm({
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
-                // go to comment
                 commentRef.current?.focus()
                 return
               }
@@ -1299,9 +1288,9 @@ export default function CreateDriverForm({
 
         <div className="space-y-4">
           <div className="text-gray-900 font-medium">Tags</div>
-          <TagGroup title="Positive" list={grouped.positive ?? []} />
-          <TagGroup title="Neutral" list={grouped.neutral ?? []} />
-          <TagGroup title="Negative" list={grouped.negative ?? []} />
+          <TagGroup title="Positive" list={grouped.positive ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
+          <TagGroup title="Neutral" list={grouped.neutral ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
+          <TagGroup title="Negative" list={grouped.negative ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
         </div>
 
         {/* Comment box with counter */}
@@ -1322,33 +1311,23 @@ export default function CreateDriverForm({
               disabled={loading}
               className={[
                 'w-full rounded-md border bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 outline-none transition',
-                overLimit
-                  ? 'border-red-500 ring-1 ring-red-500 focus:ring-2 focus:ring-red-500'
-                  : 'border-gray-300 focus:ring-2 focus:ring-black/20',
+                overLimit ? 'border-red-500 ring-1 ring-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/20',
                 loading ? 'opacity-60 cursor-not-allowed' : '',
               ].join(' ')}
             />
 
-            <div
-              className={[
-                'absolute bottom-2 right-3 text-xs tabular-nums',
-                overLimit ? 'text-red-600' : 'text-gray-600',
-              ].join(' ')}
-            >
+            <div className={['absolute bottom-2 right-3 text-xs tabular-nums', overLimit ? 'text-red-600' : 'text-gray-600'].join(' ')}>
               {commentCount}/{MAX_COMMENT_CHARS}
             </div>
           </div>
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
-              continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 
-          <p className="text-xs text-gray-600">
-            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-          </p>
+          <p className="text-xs text-gray-600">Note: some language may be automatically censored. Hate speech/slurs are not allowed.</p>
         </div>
       </div>
 

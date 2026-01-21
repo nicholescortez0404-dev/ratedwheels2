@@ -12,12 +12,39 @@ const MAX_COMMENT_CHARS = 500
 // Comma-separated in env, e.g. "word1,word2,word3"
 const SLUR_BLOCKLIST = (process.env.SLUR_BLOCKLIST || '')
   .split(',')
-  .map(w => w.trim().toLowerCase())
+  .map((w) => w.trim().toLowerCase())
   .filter(Boolean)
 
 leoProfanity.loadDictionary()
 
+/* -------------------- types -------------------- */
+
+type JsonObject = Record<string, unknown>
+
+type ReviewInsertRow = {
+  driver_id: string
+  stars: number
+  comment: string | null
+}
+
+type ReviewRow = {
+  id: string
+  driver_id: string
+  stars: number
+  comment: string | null
+  created_at?: string
+}
+
+type RateLimitRow = {
+  driver_id: string
+  ip_hash: string
+}
+
 /* -------------------- helpers -------------------- */
+
+function isJsonObject(v: unknown): v is JsonObject {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
 
 function getClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -63,7 +90,7 @@ function containsSlur(text: string) {
   if (!text || SLUR_BLOCKLIST.length === 0) return false
   const lower = text.toLowerCase()
   // simple contains check; keep blocklist private + curated
-  return SLUR_BLOCKLIST.some(slur => slur && lower.includes(slur))
+  return SLUR_BLOCKLIST.some((slur) => slur && lower.includes(slur))
 }
 
 function containsLinkOrHandle(text: string) {
@@ -93,12 +120,14 @@ function uniqStrings(arr: unknown[]) {
 export async function POST(req: Request) {
   try {
     const supabase = getClient()
-    const body = await req.json().catch(() => ({}))
 
-    const driverId = String(body?.driverId ?? '').trim()
-    const stars = Number(body?.stars)
-    const commentRaw = body?.comment
-    const tagIds = Array.isArray(body?.tagIds) ? uniqStrings(body.tagIds) : []
+    const bodyUnknown: unknown = await req.json().catch(() => ({}))
+    const body: JsonObject = isJsonObject(bodyUnknown) ? bodyUnknown : {}
+
+    const driverId = String(body.driverId ?? '').trim()
+    const stars = Number(body.stars)
+    const commentRaw = body.comment
+    const tagIds = Array.isArray(body.tagIds) ? uniqStrings(body.tagIds) : []
 
     // Basic validation
     if (!driverId) {
@@ -113,85 +142,70 @@ export async function POST(req: Request) {
 
     // 🚫 HARD BLOCK: slurs / hate terms
     if (commentNorm && containsSlur(commentNorm)) {
-      return NextResponse.json(
-        { error: 'Your comment contains prohibited language.' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Your comment contains prohibited language.' }, { status: 400 })
     }
 
-    // 🚫 HARD BLOCK: links / contact attempts (optional but recommended)
+    // 🚫 HARD BLOCK: links / contact attempts
     if (commentNorm && containsLinkOrHandle(commentNorm)) {
-      return NextResponse.json(
-        { error: 'Please don’t include links, emails, or social handles.' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Please don’t include links, emails, or social handles.' }, { status: 400 })
     }
 
     // 🧼 SOFT CENSOR: mild profanity
     const safeComment =
-      commentNorm && leoProfanity.check(commentNorm)
-        ? leoProfanity.clean(commentNorm)
-        : commentNorm
+      commentNorm && leoProfanity.check(commentNorm) ? leoProfanity.clean(commentNorm) : commentNorm
 
     // Store null for empty comments (keeps DB clean)
-    const finalComment = safeComment ? safeComment : null
+    const finalComment: string | null = safeComment ? safeComment : null
 
     // ⏱️ RATE LIMIT: 1 review per driver per network (IP hash)
     const ipHash = hashIp(getIp(req))
 
     const { error: rlErr } = await supabase
       .from('review_rate_limits')
-      .insert({ driver_id: driverId, ip_hash: ipHash })
+      .insert({ driver_id: driverId, ip_hash: ipHash } satisfies RateLimitRow)
 
     // Postgres unique violation
     if (rlErr?.code === '23505') {
-      return NextResponse.json(
-        { error: 'You already reviewed this driver from this network.' },
-        { status: 429 }
-      )
+      return NextResponse.json({ error: 'You already reviewed this driver from this network.' }, { status: 429 })
     }
     if (rlErr) {
       return NextResponse.json({ error: rlErr.message }, { status: 500 })
     }
 
     // 📝 INSERT REVIEW
+    const insertRow: ReviewInsertRow = {
+      driver_id: driverId,
+      stars,
+      comment: finalComment,
+    }
+
     const { data: review, error: reviewErr } = await supabase
       .from('reviews')
-      .insert({
-        driver_id: driverId,
-        stars,
-        comment: finalComment,
-        // Optional: store whether we censored anything (if you add this column)
-        // was_censored: finalComment !== commentNorm ? true : false,
-      })
-      .select()
+      .insert(insertRow)
+      .select('id,driver_id,stars,comment,created_at')
       .single()
 
     if (reviewErr) {
       return NextResponse.json({ error: reviewErr.message }, { status: 500 })
     }
 
+    const reviewRow = review as ReviewRow
+
     // 🏷️ TAGS (best-effort, don’t fail the whole request if tags insert fails)
     if (tagIds.length) {
-      const { error: tagsErr } = await supabase.from('review_tags').insert(
-        tagIds.map(tag_id => ({
-          review_id: review.id,
-          tag_id,
-        }))
-      )
+      const rows = tagIds.map((tag_id) => ({ review_id: reviewRow.id, tag_id }))
 
-      // Optional: if you want tags errors surfaced, swap this to a 500
+      const { error: tagsErr } = await supabase.from('review_tags').insert(rows)
+
       if (tagsErr) {
-        // eslint-disable-next-line no-console
+        // no eslint-disable needed (no-console isn’t enabled in your lint output)
         console.warn('review_tags insert failed:', tagsErr.message)
       }
     }
 
-    return NextResponse.json({ ok: true, review })
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || 'Server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ ok: true, review: reviewRow })
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Server error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
