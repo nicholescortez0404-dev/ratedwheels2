@@ -3,6 +3,7 @@ export const revalidate = 0
 export const fetchCache = 'force-no-store'
 
 import { unstable_noStore as noStore } from 'next/cache'
+import Link from 'next/link'
 import SearchForm from './SearchForm'
 import ReviewForm from './ReviewForm'
 import CreateDriverForm from './CreateDriverForm'
@@ -15,6 +16,17 @@ type DriverStat = {
   review_count: number | null
 }
 
+type DriverRow = {
+  id: string
+  driver_handle: string
+  display_name: string | null
+  city: string | null
+  state: string | null
+  car_color: string | null
+  car_make: string | null
+  car_model: string | null
+}
+
 function formatAvg(avg: number | null | undefined) {
   if (avg === null || avg === undefined || Number.isNaN(avg)) return '—'
   return Number(avg).toFixed(1)
@@ -22,6 +34,21 @@ function formatAvg(avg: number | null | undefined) {
 
 function normalizeHandle(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, '-')
+}
+
+function isPlateLeadingQuery(q: string) {
+  // "7483" OR "7483-m" OR "7483-mi" OR "7483-mike" => true
+  // Anything else => false
+  return /^\d{4}($|[-].*)/.test(q)
+}
+
+function escapeIlikeLiteral(s: string) {
+  // Supabase ilike supports % and _ wildcards; escape literal % and _ so user input can’t act like a wildcard
+  return s.replace(/[%_\\]/g, (m) => `\\${m}`)
+}
+
+function safeIlikePatternPrefix(q: string) {
+  return `${escapeIlikeLiteral(q)}%`
 }
 
 export default async function SearchPage({
@@ -39,36 +66,38 @@ export default async function SearchPage({
 }) {
   noStore()
   const supabase = createSupabaseServerClient()
-
   const sp = await searchParams
 
   const raw = (sp.q ?? '').trim()
   const q = normalizeHandle(raw)
 
-  // Optional params (used for autofill if driver not found)
+  // Optional params (used for autofill if driver not found / narrowing suggestions)
   const initialState = String(sp.state ?? '').trim().toUpperCase()
   const initialCity = String(sp.city ?? '').trim()
   const initialCarColor = String(sp.car_color ?? '').trim()
   const initialCarMake = String(sp.car_make ?? '').trim()
   const initialCarModel = String(sp.car_model ?? '').trim()
 
+  const hasDisambiguator =
+    Boolean(initialState) ||
+    Boolean(initialCity) ||
+    Boolean(initialCarColor) ||
+    Boolean(initialCarMake) ||
+    Boolean(initialCarModel)
+
   // sorting
   const allowedSorts = new Set(['newest', 'oldest', 'highest', 'lowest'])
   const sortParam = String(sp.sort ?? 'newest').toLowerCase()
   const sortMode = allowedSorts.has(sortParam) ? sortParam : 'newest'
 
-  let driver: any = null
+  let driver: DriverRow | null = null
   let reviews: any[] = []
-
   let avgStars: number | null = null
   let reviewCount = 0
 
   // Trait aggregation
   const traitCounts = { positive: 0, neutral: 0, negative: 0 }
-  const tagFreq: Record<
-    string,
-    { id: string; label: string; category: string; slug: string; count: number }
-  > = {}
+  const tagFreq: Record<string, { id: string; label: string; category: string; slug: string; count: number }> = {}
 
   const tagsByCategory = {
     positive: [] as { label: string; count: number }[],
@@ -76,10 +105,45 @@ export default async function SearchPage({
     negative: [] as { label: string; count: number }[],
   }
 
-  if (q) {
-    const { data: d } = await supabase.from('drivers').select('*').eq('driver_handle', q).maybeSingle()
-    driver = d
+  // Suggestions for plate-leading partial searches (ONLY when exact not found AND disambiguator present)
+  let suggestions: DriverRow[] = []
+  const shouldPromptForDisambiguator = Boolean(q) && !driver && isPlateLeadingQuery(q) && !hasDisambiguator
 
+  if (q) {
+    // 1) Always attempt exact match first
+    const { data: d } = await supabase.from('drivers').select('*').eq('driver_handle', q).maybeSingle()
+    driver = (d as DriverRow | null) ?? null
+
+    // 2) If exact not found, AND query starts with a 4-digit plate, AND user provided ANY disambiguator,
+    // then do prefix suggestions narrowed by disambiguators.
+    if (!driver && isPlateLeadingQuery(q) && hasDisambiguator) {
+      let sq = supabase
+        .from('drivers')
+        .select('id,driver_handle,display_name,city,state,car_color,car_make,car_model')
+        .ilike('driver_handle', safeIlikePatternPrefix(q))
+        .limit(25)
+
+      // Disambiguators ONLY NARROW (never broaden)
+      if (initialState) sq = sq.eq('state', initialState)
+
+      if (initialCity) {
+        sq = sq.ilike('city', `%${escapeIlikeLiteral(initialCity)}%`)
+      }
+      if (initialCarColor) {
+        sq = sq.ilike('car_color', `%${escapeIlikeLiteral(initialCarColor)}%`)
+      }
+      if (initialCarMake) {
+        sq = sq.ilike('car_make', `%${escapeIlikeLiteral(initialCarMake)}%`)
+      }
+      if (initialCarModel) {
+        sq = sq.ilike('car_model', `%${escapeIlikeLiteral(initialCarModel)}%`)
+      }
+
+      const { data: s } = await sq
+      suggestions = (s as DriverRow[] | null) ?? []
+    }
+
+    // 3) If we found the driver, proceed with stats + reviews logic
     if (driver?.id) {
       const { data: statRow } = await supabase
         .from('driver_stats')
@@ -188,18 +252,7 @@ export default async function SearchPage({
       </div>
 
       {/* RESULTS */}
-      {!q ? null : !driver ? (
-        <div className="mt-8 rounded-lg border border-gray-300 p-4">
-          <CreateDriverForm
-            initialRaw={raw}
-            initialState={initialState}
-            initialCity={initialCity}
-            initialCarColor={initialCarColor}
-            initialCarMake={initialCarMake}
-            initialCarModel={initialCarModel}
-          />
-        </div>
-      ) : (
+      {!q ? null : driver ? (
         <section className="mt-8 space-y-6">
           {/* Driver card */}
           <div className="rounded-lg border border-gray-300 p-4">
@@ -284,9 +337,7 @@ export default async function SearchPage({
                     </div>
 
                     <details className="text-sm">
-                      <summary className="cursor-pointer text-gray-700 hover:text-gray-900">
-                        Show tags
-                      </summary>
+                      <summary className="cursor-pointer text-gray-700 hover:text-gray-900">Show tags</summary>
 
                       {tagsByCategory[key].length === 0 ? (
                         <div className="mt-2 text-gray-600">No tags yet.</div>
@@ -328,11 +379,7 @@ export default async function SearchPage({
                   const tagList = (r.review_tags ?? []).map((rt: any) => rt?.tag).filter(Boolean)
 
                   return (
-                    <li
-                      key={r.id}
-                      id={`review-${r.id}`}
-                      className="rounded-2xl border border-gray-300 bg-transparent p-5"
-                    >
+                    <li key={r.id} id={`review-${r.id}`} className="rounded-2xl border border-gray-300 bg-transparent p-5">
                       <div className="flex items-center justify-between gap-4">
                         <div className="text-sm font-semibold">Rating: {r.stars}/5</div>
                         <div className="text-xs text-gray-600">
@@ -363,6 +410,96 @@ export default async function SearchPage({
                 })}
               </ul>
             )}
+          </div>
+        </section>
+      ) : suggestions.length > 0 ? (
+        // Suggestions view (exact not found, plate-leading + disambiguator produced candidates)
+        <section className="mt-8 space-y-4">
+          <div className="rounded-lg border border-gray-300 p-4">
+            <div className="text-lg font-semibold">Did you mean one of these?</div>
+            <p className="text-sm text-gray-600 mt-1">
+              No exact match for <span className="font-semibold">{raw}</span>, but we found drivers that start with it —
+              narrowed using your optional details.
+            </p>
+
+            <div className="mt-4 grid gap-3">
+              {suggestions.map((d) => (
+                <Link
+                  key={d.id}
+                  href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
+                  className="rounded-lg border border-gray-300 bg-white/40 p-4 hover:bg-white/60 transition"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-base font-semibold">{d.display_name ?? d.driver_handle}</div>
+                      <div className="text-sm text-gray-700">@{d.driver_handle}</div>
+                      <div className="text-sm text-gray-600">
+                        {d.city ?? '—'}
+                        {d.state ? `, ${d.state}` : ''}
+                      </div>
+
+                      {(d.car_color || d.car_make || d.car_model) && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {d.car_color && (
+                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
+                              {d.car_color}
+                            </span>
+                          )}
+                          {d.car_make && (
+                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
+                              {d.car_make}
+                            </span>
+                          )}
+                          {d.car_model && (
+                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
+                              {d.car_model}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-sm text-gray-600">Open</div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-gray-300 p-4">
+            <CreateDriverForm
+              initialRaw={raw}
+              initialState={initialState}
+              initialCity={initialCity}
+              initialCarColor={initialCarColor}
+              initialCarMake={initialCarMake}
+              initialCarModel={initialCarModel}
+            />
+          </div>
+        </section>
+      ) : (
+        // Exact not found and no suggestions
+        <section className="mt-8 space-y-4">
+          {shouldPromptForDisambiguator && (
+            <div className="rounded-lg border border-gray-300 bg-white/40 p-4">
+              <div className="text-lg font-semibold">Add one more detail</div>
+              <p className="mt-1 text-sm text-gray-700">
+                To avoid showing the wrong driver, partial searches like{' '}
+                <span className="font-semibold">{raw}</span> only show matches when you add at least one optional detail
+                (state/city/car). Or finish the full handle like <span className="font-semibold">7483-mike</span>.
+              </p>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-gray-300 p-4">
+            <CreateDriverForm
+              initialRaw={raw}
+              initialState={initialState}
+              initialCity={initialCity}
+              initialCarColor={initialCarColor}
+              initialCarMake={initialCarMake}
+              initialCarModel={initialCarModel}
+            />
           </div>
         </section>
       )}
