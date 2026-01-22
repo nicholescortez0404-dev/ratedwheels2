@@ -1,3 +1,4 @@
+// app/search/page.tsx
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 export const fetchCache = 'force-no-store'
@@ -22,11 +23,8 @@ type DriverRow = {
   id: string
   driver_handle: string
   display_name: string | null
-  city: string | null
   state: string | null
-  car_color: string | null
   car_make: string | null
-  car_model: string | null
 }
 
 type TagRow = {
@@ -86,26 +84,8 @@ function safePrefixIlike(q: string) {
   return `${escapeIlikeLiteral(q)}%`
 }
 
-function hasAnyDisambiguator(params: {
-  state?: string
-  city?: string
-  car_color?: string
-  car_make?: string
-  car_model?: string
-}) {
-  return Boolean(
-    (params.state ?? '').trim() ||
-      (params.city ?? '').trim() ||
-      (params.car_color ?? '').trim() ||
-      (params.car_make ?? '').trim() ||
-      (params.car_model ?? '').trim()
-  )
-}
-
-function buildCityIlike(city: string) {
-  // If your DB stores "Chicago" (clean display) this works.
-  // If your DB stores "Chicago city", still works because it's contains.
-  return `%${escapeIlikeLiteral(city.trim())}%`
+function hasAnyDisambiguator(params: { state?: string; car_make?: string }) {
+  return Boolean((params.state ?? '').trim() || (params.car_make ?? '').trim())
 }
 
 function buildContainsIlike(v: string) {
@@ -121,10 +101,7 @@ export default async function SearchPage({
     q?: string
     sort?: string
     state?: string
-    city?: string
-    car_color?: string
     car_make?: string
-    car_model?: string
   }>
 }) {
   noStore()
@@ -137,19 +114,13 @@ export default async function SearchPage({
   // normalized query used for DB matching
   const q = normalizeQuery(rawQ)
 
-  // optional filters
+  // optional filters (only the ones we still support)
   const initialState = String(sp.state ?? '').trim().toUpperCase()
-  const initialCity = String(sp.city ?? '').trim()
-  const initialCarColor = String(sp.car_color ?? '').trim()
   const initialCarMake = String(sp.car_make ?? '').trim()
-  const initialCarModel = String(sp.car_model ?? '').trim()
 
   const disambiguatorPresent = hasAnyDisambiguator({
     state: initialState,
-    city: initialCity,
-    car_color: initialCarColor,
     car_make: initialCarMake,
-    car_model: initialCarModel,
   })
 
   // sort
@@ -182,7 +153,7 @@ export default async function SearchPage({
     negative: [],
   }
 
-  // UI state messages (what we discussed)
+  // UI state messages
   let helperMessage: string | null = null
   let showCreateDriver = false
 
@@ -199,11 +170,10 @@ export default async function SearchPage({
 
   if (q) {
     // ------------- EXACT LOOKUP -------------
-    // only attempt exact if the query looks like an exact handle
     if (isExactHandle) {
       const { data: d, error } = await supabase
         .from('drivers')
-        .select('id,driver_handle,display_name,city,state,car_color,car_make,car_model')
+        .select('id,driver_handle,display_name,state,car_make')
         .eq('driver_handle', q)
         .maybeSingle()
 
@@ -225,32 +195,26 @@ export default async function SearchPage({
         // "2222" with no disambiguator => block suggestions, show helper
         if (typedOnlyPlate && !disambiguatorPresent) {
           helperMessage =
-            'That’s only the plate. Add a first-name letter (example: 2222-t) or add a detail (state/city/car) to narrow.'
+            'That’s only the plate. Add a first-name letter (example: 2222-t) or add a detail (state / car make) to narrow.'
           showCreateDriver = true
         } else {
           // Allowed to suggest:
           // - has name prefix: "2222-t" => prefix "2222-t%"
-          // - OR plate only but disambiguator exists: prefix "2222-%" (not "2222%" because handles are plate-name)
+          // - OR plate only but disambiguator exists: prefix "2222-%"
           const prefix = namePrefix ? `${plate}-${namePrefix}` : `${plate}-`
 
           let sq = supabase
             .from('drivers')
-            .select('id,driver_handle,display_name,city,state,car_color,car_make,car_model')
+            .select('id,driver_handle,display_name,state,car_make')
             .ilike('driver_handle', safePrefixIlike(prefix))
             .limit(25)
 
           if (initialState) sq = sq.eq('state', initialState)
-          if (initialCity) sq = sq.ilike('city', buildCityIlike(initialCity))
-          if (initialCarColor) sq = sq.ilike('car_color', buildContainsIlike(initialCarColor))
           if (initialCarMake) sq = sq.ilike('car_make', buildContainsIlike(initialCarMake))
-          if (initialCarModel) sq = sq.ilike('car_model', buildContainsIlike(initialCarModel))
 
           const { data: s, error: sErr } = await sq
           if (!sErr) suggestions = (s as DriverRow[] | null) ?? []
 
-          // If we found exactly one suggestion AND it is an exact handle match, we can auto-open it.
-          // BUT: we promised “no dumping wrong driver”. So we only auto-open if user provided namePrefix OR full handle.
-          // (i.e., "2222-t" that matches exactly "2222-test" is NOT exact; keep it as suggestion list.)
           showCreateDriver = true
         }
       }
@@ -351,14 +315,7 @@ export default async function SearchPage({
 
       {/* SEARCH */}
       <div className="flex flex-col items-center">
-        <SearchForm
-          initialQuery={rawQ}
-          initialState={initialState}
-          initialCity={initialCity}
-          initialCarColor={initialCarColor}
-          initialCarMake={initialCarMake}
-          initialCarModel={initialCarModel}
-        />
+        <SearchForm initialQuery={rawQ} initialState={initialState} initialCarMake={initialCarMake} />
 
         {!q && <p className="mt-6 text-sm text-gray-600">Type a handle to search.</p>}
 
@@ -379,31 +336,11 @@ export default async function SearchPage({
               <div>
                 <div className="text-xl font-semibold">{driver.display_name ?? driver.driver_handle}</div>
 
-                {/* ✅ remove redundant "@handle" line (display_name already includes it) */}
-                <div className="text-gray-600">
-                  {driver.city ?? '—'}
-                  {driver.state ? `, ${driver.state}` : ''}
+                {/* Minimal line: State + Car make */}
+                <div className="mt-1 text-sm text-gray-700">
+                  {driver.state ? `State: ${driver.state}` : 'State: —'}
+                  {driver.car_make ? ` • Car make: ${driver.car_make}` : ''}
                 </div>
-
-                {(driver.car_color || driver.car_make || driver.car_model) && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {driver.car_color && (
-                      <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                        {driver.car_color}
-                      </span>
-                    )}
-                    {driver.car_make && (
-                      <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                        {driver.car_make}
-                      </span>
-                    )}
-                    {driver.car_model && (
-                      <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                        {driver.car_model}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
 
               <div className="text-right">
@@ -555,30 +492,12 @@ export default async function SearchPage({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-base font-semibold">{d.display_name ?? d.driver_handle}</div>
-                      <div className="text-sm text-gray-600">
-                        {d.city ?? '—'}
-                        {d.state ? `, ${d.state}` : ''}
-                      </div>
 
-                      {(d.car_color || d.car_make || d.car_model) && (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {d.car_color && (
-                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                              {d.car_color}
-                            </span>
-                          )}
-                          {d.car_make && (
-                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                              {d.car_make}
-                            </span>
-                          )}
-                          {d.car_model && (
-                            <span className="rounded-full border border-gray-300 bg-white/70 px-3 py-1 text-xs text-gray-900">
-                              {d.car_model}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      {/* Minimal line: State + Car make */}
+                      <div className="mt-1 text-sm text-gray-700">
+                        {d.state ? `State: ${d.state}` : 'State: —'}
+                        {d.car_make ? ` • Car make: ${d.car_make}` : ''}
+                      </div>
                     </div>
 
                     <div className="text-sm text-gray-600">Open</div>
@@ -590,14 +509,7 @@ export default async function SearchPage({
 
           {showCreateDriver && (
             <div className="rounded-lg border border-gray-300 p-4">
-              <CreateDriverForm
-                initialRaw={rawQ}
-                initialState={initialState}
-                initialCity={initialCity}
-                initialCarColor={initialCarColor}
-                initialCarMake={initialCarMake}
-                initialCarModel={initialCarModel}
-              />
+              <CreateDriverForm initialRaw={rawQ} initialState={initialState} initialCarMake={initialCarMake} />
             </div>
           )}
         </section>
@@ -612,14 +524,7 @@ export default async function SearchPage({
 
           {showCreateDriver && (
             <div className="rounded-lg border border-gray-300 p-4">
-              <CreateDriverForm
-                initialRaw={rawQ}
-                initialState={initialState}
-                initialCity={initialCity}
-                initialCarColor={initialCarColor}
-                initialCarMake={initialCarMake}
-                initialCarModel={initialCarModel}
-              />
+              <CreateDriverForm initialRaw={rawQ} initialState={initialState} initialCarMake={initialCarMake} />
             </div>
           )}
         </section>

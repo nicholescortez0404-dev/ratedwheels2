@@ -8,6 +8,7 @@ export const runtime = 'nodejs'
 /* -------------------- config -------------------- */
 
 const MAX_COMMENT_CHARS = 500
+const MAX_TAGS = 25
 
 // Comma-separated in env, e.g. "word1,word2,word3"
 const SLUR_BLOCKLIST = (process.env.SLUR_BLOCKLIST || '')
@@ -68,16 +69,15 @@ function sha256(input: string) {
 }
 
 function hashIp(ip: string) {
+  // IMPORTANT: set IP_HASH_SALT in env in production
   const salt = process.env.IP_HASH_SALT || 'ratedwheels'
   return sha256(`${salt}:${ip}`)
 }
 
 function normalize(text: unknown) {
   return String(text ?? '')
-    // remove zero-width chars
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    // collapse whitespace
-    .replace(/\s+/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // remove zero-width chars
+    .replace(/\s+/g, ' ') // collapse whitespace
     .trim()
 }
 
@@ -89,7 +89,6 @@ function clampComment(text: string) {
 function containsSlur(text: string) {
   if (!text || SLUR_BLOCKLIST.length === 0) return false
   const lower = text.toLowerCase()
-  // simple contains check; keep blocklist private + curated
   return SLUR_BLOCKLIST.some((slur) => slur && lower.includes(slur))
 }
 
@@ -102,10 +101,11 @@ function containsLinkOrHandle(text: string) {
   return link.test(text) || email.test(text) || handle.test(text)
 }
 
-function uniqStrings(arr: unknown[]) {
+function uniqStrings(arr: unknown[], max = MAX_TAGS) {
   const out: string[] = []
   const seen = new Set<string>()
   for (const v of arr) {
+    if (out.length >= max) break
     const s = String(v ?? '').trim()
     if (!s) continue
     if (seen.has(s)) continue
@@ -115,11 +115,26 @@ function uniqStrings(arr: unknown[]) {
   return out
 }
 
+// Optional: only accept UUID-ish tag IDs (keeps junk out of DB).
+// If your tag ids are not UUIDs, delete this and keep uniqStrings only.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function filterUuidLike(ids: string[]) {
+  return ids.filter((id) => UUID_RE.test(id))
+}
+
 /* -------------------- handler -------------------- */
 
 export async function POST(req: Request) {
   try {
     const supabase = getClient()
+
+    // basic guard: JSON only
+    const contentType = req.headers.get('content-type') ?? ''
+    if (!contentType.toLowerCase().includes('application/json')) {
+      return NextResponse.json({ error: 'Content-Type must be application/json.' }, { status: 415 })
+    }
 
     const bodyUnknown: unknown = await req.json().catch(() => ({}))
     const body: JsonObject = isJsonObject(bodyUnknown) ? bodyUnknown : {}
@@ -127,12 +142,11 @@ export async function POST(req: Request) {
     const driverId = String(body.driverId ?? '').trim()
     const stars = Number(body.stars)
     const commentRaw = body.comment
-    const tagIds = Array.isArray(body.tagIds) ? uniqStrings(body.tagIds) : []
+    const tagIdsRaw = Array.isArray(body.tagIds) ? uniqStrings(body.tagIds) : []
+    const tagIds = filterUuidLike(tagIdsRaw) // remove this line if your tag ids aren't UUIDs
 
     // Basic validation
-    if (!driverId) {
-      return NextResponse.json({ error: 'Missing driverId.' }, { status: 400 })
-    }
+    if (!driverId) return NextResponse.json({ error: 'Missing driverId.' }, { status: 400 })
     if (!Number.isFinite(stars) || stars < 1 || stars > 5) {
       return NextResponse.json({ error: 'Stars must be 1–5.' }, { status: 400 })
     }
@@ -158,6 +172,7 @@ export async function POST(req: Request) {
     const finalComment: string | null = safeComment ? safeComment : null
 
     // ⏱️ RATE LIMIT: 1 review per driver per network (IP hash)
+    // IMPORTANT FIX: if review insert fails later, we delete this row so user can retry.
     const ipHash = hashIp(getIp(req))
 
     const { error: rlErr } = await supabase
@@ -186,21 +201,18 @@ export async function POST(req: Request) {
       .single()
 
     if (reviewErr) {
+      // cleanup rate-limit row so they can retry
+      await supabase.from('review_rate_limits').delete().eq('driver_id', driverId).eq('ip_hash', ipHash)
       return NextResponse.json({ error: reviewErr.message }, { status: 500 })
     }
 
     const reviewRow = review as ReviewRow
 
-    // 🏷️ TAGS (best-effort, don’t fail the whole request if tags insert fails)
+    // 🏷️ TAGS (best-effort; don’t fail the whole request if tags insert fails)
     if (tagIds.length) {
       const rows = tagIds.map((tag_id) => ({ review_id: reviewRow.id, tag_id }))
-
       const { error: tagsErr } = await supabase.from('review_tags').insert(rows)
-
-      if (tagsErr) {
-        // no eslint-disable needed (no-console isn’t enabled in your lint output)
-        console.warn('review_tags insert failed:', tagsErr.message)
-      }
+      if (tagsErr) console.warn('review_tags insert failed:', tagsErr.message)
     }
 
     return NextResponse.json({ ok: true, review: reviewRow })

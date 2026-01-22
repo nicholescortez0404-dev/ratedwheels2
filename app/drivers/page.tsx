@@ -6,15 +6,14 @@ import { unstable_noStore as noStore } from 'next/cache'
 import Link from 'next/link'
 import { createSupabaseServerClient } from '@/lib/supabaseServer'
 
+/* -------------------- types -------------------- */
+
 type Driver = {
   id: string
   display_name: string | null
   driver_handle: string
-  city: string | null
   state: string | null
-  car_color: string | null
   car_make: string | null
-  car_model: string | null
 }
 
 type DriverStat = {
@@ -23,19 +22,28 @@ type DriverStat = {
   review_count: number | null
 }
 
+/* -------------------- helpers -------------------- */
+
 function formatAvg(avg: number | null | undefined) {
   if (avg === null || avg === undefined || Number.isNaN(avg)) return '—'
   return Number(avg).toFixed(1)
 }
 
+function safeUpper2(v: string | null | undefined) {
+  const s = String(v ?? '').trim().toUpperCase()
+  return s && s.length === 2 ? s : s
+}
+
+/* -------------------- page -------------------- */
+
 export default async function DriversPage() {
   noStore()
   const supabase = createSupabaseServerClient()
 
-  // 1) Load drivers (newest first)
+  // 1) Load drivers (newest first) — only the fields we still use
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
-    .select('id,display_name,driver_handle,city,state,car_color,car_make,car_model,created_at')
+    .select('id,display_name,driver_handle,state,car_make,created_at')
     .order('created_at', { ascending: false })
 
   if (driversErr) {
@@ -57,7 +65,7 @@ export default async function DriversPage() {
 
   const drivers = (driversData ?? []) as Driver[]
 
-  // 2) Stats only for these drivers
+  // 2) Load stats only for these drivers
   let statsByDriver = new Map<string, DriverStat>()
 
   if (drivers.length > 0) {
@@ -109,7 +117,8 @@ export default async function DriversPage() {
               const avg = s?.avg_stars ?? null
               const count = s?.review_count ?? 0
 
-              const carLine = [d.car_color, d.car_make, d.car_model].filter(Boolean).join(' ')
+              const stateLabel = safeUpper2(d.state)
+              const makeLabel = String(d.car_make ?? '').trim()
 
               return (
                 <Link
@@ -121,12 +130,11 @@ export default async function DriversPage() {
                     <div>
                       <div className="text-xl font-semibold">{d.display_name ?? d.driver_handle}</div>
 
-                      <div className="text-gray-600">
-                        {d.city ?? '—'}
-                        {d.state ? `, ${d.state}` : ''}
+                      {/* ✅ plain text line (no pills) */}
+                      <div className="mt-1 text-sm text-gray-700">
+                        {stateLabel ? <span>State: {stateLabel}</span> : <span>State: —</span>}
+                        {makeLabel ? <span className="ml-3">Car make: {makeLabel}</span> : <span className="ml-3">Car make: —</span>}
                       </div>
-
-                      {carLine && <div className="text-gray-600">{carLine}</div>}
                     </div>
 
                     <div className="text-right">

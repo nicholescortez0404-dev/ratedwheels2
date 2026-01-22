@@ -1,11 +1,8 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { supabase } from '@/lib/supabaseClient'
+import { useRouter } from 'next/navigation'
 import { useEnterToNext } from '@/lib/useEnterToNext'
-
-type CitySuggestionRow = { name: string; display_name: string }
-type CitySuggestion = { name: string; display_name: string }
 
 const STATES: { code: string; name: string }[] = [
   { code: 'AL', name: 'Alabama' },
@@ -73,7 +70,7 @@ function normalizeQuery(raw: string) {
 }
 
 function parsePlateLeading(norm: string) {
-  // Accept plate-leading patterns:
+  // Accept:
   //  - "2222"
   //  - "2222-t"
   //  - "2222-te"
@@ -112,9 +109,7 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <span className="font-semibold underline underline-offset-2">
-        {text.slice(idx, idx + query.length)}
-      </span>
+      <span className="font-semibold underline underline-offset-2">{text.slice(idx, idx + query.length)}</span>
       {text.slice(idx + query.length)}
     </>
   )
@@ -123,34 +118,25 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
 export default function SearchForm({
   initialQuery = '',
   initialState = '',
-  initialCity = '',
-  initialCarColor = '',
   initialCarMake = '',
-  initialCarModel = '',
 }: {
   initialQuery?: string
   initialState?: string
-  initialCity?: string
-  initialCarColor?: string
   initialCarMake?: string
-  initialCarModel?: string
 }) {
+  const router = useRouter()
+
   /* -------------------- refs -------------------- */
   const qRef = useRef<HTMLInputElement>(null)
   const stateRef = useRef<HTMLInputElement>(null)
-  const cityRef = useRef<HTMLInputElement>(null)
-  const colorRef = useRef<HTMLInputElement>(null)
   const makeRef = useRef<HTMLInputElement>(null)
-  const modelRef = useRef<HTMLInputElement>(null)
   const submitRef = useRef<HTMLButtonElement>(null)
 
-  const enterNext = useEnterToNext([qRef, stateRef, cityRef, colorRef, makeRef, modelRef, submitRef])
+  const enterNext = useEnterToNext([qRef, stateRef, makeRef, submitRef])
 
   /* -------------------- form state -------------------- */
   const [qInput, setQInput] = useState(initialQuery)
-  const [carColor, setCarColor] = useState(initialCarColor)
   const [carMake, setCarMake] = useState(initialCarMake)
-  const [carModel, setCarModel] = useState(initialCarModel)
 
   /* -------------------- helper + shake -------------------- */
   const [helper, setHelper] = useState<string | null>(null)
@@ -170,30 +156,11 @@ export default function SearchForm({
   const stateListRef = useRef<HTMLDivElement | null>(null)
 
   const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
-  const statePicked = state.trim().length === 2
-
-  /* -------------------- City dropdown -------------------- */
-  const [cityInput, setCityInput] = useState(initialCity || '')
-  const [cityOpen, setCityOpen] = useState(false)
-  const [cityLoading, setCityLoading] = useState(false)
-  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([])
-  const [cityLimit, setCityLimit] = useState(80)
-  const [cityActiveIndex, setCityActiveIndex] = useState(-1)
-
-  const cityBoxRef = useRef<HTMLDivElement | null>(null)
-  const cityListRef = useRef<HTMLDivElement | null>(null)
-  const cityFetchId = useRef(0)
-
-  // Derived effective city behavior (keeps state updates out of effects)
-  const effectiveCityOpen = statePicked ? cityOpen : false
-  const effectiveCityLoading = statePicked ? cityLoading : false
-  const effectiveCitySuggestions = statePicked ? citySuggestions : []
-  const effectiveCityActiveIndex = statePicked ? cityActiveIndex : -1
 
   /* -------------------- disambiguators (live) -------------------- */
   const hasDisambiguatorsLive = useMemo(() => {
-    return Boolean(state.trim() || cityInput.trim() || carColor.trim() || carMake.trim() || carModel.trim())
-  }, [state, cityInput, carColor, carMake, carModel])
+    return Boolean(state.trim() || carMake.trim())
+  }, [state, carMake])
 
   /* -------------------- mobile tap vs scroll guard -------------------- */
   const touchStartYRef = useRef(0)
@@ -221,41 +188,17 @@ export default function SearchForm({
     el?.scrollIntoView({ block: 'nearest' })
   }
 
-  function scrollActiveCityIntoView(nextIdx: number) {
-    if (!cityListRef.current) return
-    const el = cityListRef.current.querySelector<HTMLElement>(`[data-city-idx="${nextIdx}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
-  }
+  const pickState = useCallback((code: string) => {
+    const up = code.toUpperCase().trim()
+    if (!STATES.some((s) => s.code === up)) return
 
-  const resetCity = useCallback(() => {
-    setCityInput('')
-    setCityOpen(false)
-    setCitySuggestions([])
-    setCityActiveIndex(-1)
-    setCityLoading(false)
-    setCityLimit(80)
+    setState(up)
+    setStateInput(up)
+    setStateOpen(false)
+    setStateActiveIndex(-1)
+
+    setTimeout(() => makeRef.current?.focus(), 0)
   }, [])
-
-  const pickState = useCallback(
-    (code: string) => {
-      const up = code.toUpperCase().trim()
-      if (!STATES.some((s) => s.code === up)) return
-
-      setState(up)
-      setStateInput(up)
-      setStateOpen(false)
-      setStateActiveIndex(-1)
-
-      // state changed => reset city
-      resetCity()
-
-      setTimeout(() => {
-        cityRef.current?.focus()
-        setCityOpen(true)
-      }, 0)
-    },
-    [resetCity]
-  )
 
   function onStateChange(v: string) {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
@@ -266,10 +209,8 @@ export default function SearchForm({
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
-      // don't reset city while typing a valid 2-letter code
     } else {
       setState('')
-      resetCity()
     }
   }
 
@@ -306,7 +247,11 @@ export default function SearchForm({
 
     if (e.key === 'Enter') {
       const raw = stateInput.trim()
-      if (!raw) return
+      if (!raw) {
+        e.preventDefault()
+        makeRef.current?.focus()
+        return
+      }
 
       const upper = raw.toUpperCase()
       const exactCode = STATES.find((s) => s.code === upper)
@@ -330,133 +275,19 @@ export default function SearchForm({
     }
   }
 
-  /* -------------------- fetch city suggestions -------------------- */
-  useEffect(() => {
-    if (!statePicked) return
-    if (!cityOpen) return
-
-    const q = cityInput.trim()
-    const shouldFetchBrowse = q.length === 0
-    const shouldFetchSearch = q.length > 0
-    if (!shouldFetchBrowse && !shouldFetchSearch) return
-
-    const myId = ++cityFetchId.current
-
-    const t = setTimeout(async () => {
-      setCityLoading(true)
-
-      const { data, error: rpcErr } = await supabase.rpc('city_suggestions', {
-        p_state: state,
-        p_query: shouldFetchSearch ? q : '',
-        p_limit: cityLimit,
-      })
-
-      if (cityFetchId.current !== myId) return
-
-      if (rpcErr) {
-        setCitySuggestions([])
-        setCityLoading(false)
-        setCityActiveIndex(-1)
-        return
-      }
-
-      const rows = (data ?? []) as CitySuggestionRow[]
-      const seen = new Set<string>()
-      const suggestions: CitySuggestion[] = []
-
-      for (const r of rows) {
-        const label = (r.display_name ?? '').trim()
-        if (!label) continue
-        const key = label.toLowerCase()
-        if (seen.has(key)) continue
-        seen.add(key)
-        suggestions.push({ name: r.name, display_name: label })
-      }
-
-      setCitySuggestions(suggestions)
-      setCityLoading(false)
-
-      if (suggestions.length > 0) {
-        setCityActiveIndex(0)
-        setTimeout(() => scrollActiveCityIntoView(0), 0)
-      } else {
-        setCityActiveIndex(-1)
-      }
-    }, q.length > 0 ? 120 : 0)
-
-    return () => clearTimeout(t)
-  }, [statePicked, state, cityOpen, cityInput, cityLimit])
-
-  const pickCitySuggestion = useCallback((s: CitySuggestion) => {
-    setCityInput(s.display_name)
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-    setTimeout(() => colorRef.current?.focus(), 0)
-  }, [])
-
-  function onCityKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!statePicked) return
-
-    if (e.key === 'Escape') {
-      if (effectiveCityOpen) {
-        e.preventDefault()
-        setCityOpen(false)
-        setCityActiveIndex(-1)
-      }
-      return
-    }
-
-    if (!effectiveCityOpen) {
-      if (e.key === 'Enter') enterNext(e)
-      return
-    }
-
-    const maxIdx = effectiveCitySuggestions.length - 1
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      setCityActiveIndex((prev) => {
-        let next = prev
-        if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : -1
-        else next = prev === -1 ? maxIdx : prev - 1
-        setTimeout(() => scrollActiveCityIntoView(next), 0)
-        return next
-      })
-      return
-    }
-
-    if (e.key === 'Enter') {
-      if (effectiveCityActiveIndex >= 0 && effectiveCitySuggestions[effectiveCityActiveIndex]) {
-        e.preventDefault()
-        pickCitySuggestion(effectiveCitySuggestions[effectiveCityActiveIndex])
-        return
-      }
-      enterNext(e)
-    }
-  }
-
-  /* -------------------- close dropdowns on outside click -------------------- */
+  /* -------------------- close dropdown on outside click -------------------- */
   useEffect(() => {
     function onDocPointerDown(e: PointerEvent) {
       const target = e.target as Node
-
       if (stateBoxRef.current && !stateBoxRef.current.contains(target)) {
         setStateOpen(false)
         setStateActiveIndex(-1)
-      }
-
-      if (effectiveCityOpen) {
-        const clickedInsideCity = cityBoxRef.current && cityBoxRef.current.contains(target)
-        if (!clickedInsideCity) {
-          setCityOpen(false)
-          setCityActiveIndex(-1)
-        }
       }
     }
 
     document.addEventListener('pointerdown', onDocPointerDown)
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
-  }, [effectiveCityOpen])
+  }, [])
 
   /* -------------------- submit gating -------------------- */
   function triggerHelper(message: string) {
@@ -468,28 +299,20 @@ export default function SearchForm({
   function canSubmit(): boolean {
     const q = normQ
 
-    // empty
     if (!q) {
       triggerHelper('Enter the last 4 digits + first name (example: 8841-mike).')
       return false
     }
 
-    // exact handle always ok
     if (isExactHandle) return true
 
-    // plate-leading patterns
     if (plateParsed) {
-      // If they typed only plate (no -namePrefix), require disambiguator.
       const typedOnlyPlate = q === plateParsed.plate
       if (typedOnlyPlate && !hasDisambiguatorsLive) {
-        triggerHelper(
-          'That’s only the plate. Add at least one detail (state/city/car), or include the first name (example: 7483-mike).'
-        )
+        triggerHelper('That’s only the plate. Add state or car make, or include the first name (example: 7483-mike).')
         return false
       }
 
-      // "2222-t" (single letter) is allowed.
-      // Also "2222-" (we don’t want that) — normalizeQuery won’t create trailing dash unless user typed it.
       if (q.endsWith('-')) {
         triggerHelper('Add at least one letter of the first name after the dash (example: 2222-t).')
         return false
@@ -498,9 +321,24 @@ export default function SearchForm({
       return true
     }
 
-    // anything else (like "mike") is not allowed
     triggerHelper('That doesn’t look like a handle. Use: last 4 + first name (example: 8841-mike).')
     return false
+  }
+
+  function buildSearchUrl() {
+    const params = new URLSearchParams()
+
+    const q = normQ
+    if (q) params.set('q', q)
+
+    const st = state.trim().toUpperCase()
+    if (st) params.set('state', st)
+
+    const mk = carMake.trim()
+    if (mk) params.set('car_make', mk)
+
+    const qs = params.toString()
+    return qs ? `/search?${qs}` : '/search'
   }
 
   /* -------------------- styles -------------------- */
@@ -508,19 +346,11 @@ export default function SearchForm({
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
 
-  const dropdownClass =
-    'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
-
+  const dropdownClass = 'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const itemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
-
-  const showLoadMoreCities =
-    effectiveCitySuggestions.length > 0 && effectiveCitySuggestions.length >= cityLimit && cityLimit < 2000
+    ['w-full text-left px-3 py-2 text-sm transition', active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100'].join(' ')
 
   return (
     <>
@@ -551,18 +381,14 @@ export default function SearchForm({
       `}</style>
 
       <form
-        action="/search"
-        method="get"
         className="mt-6 w-full max-w-xl space-y-3"
         onSubmit={(e) => {
-          if (!canSubmit()) {
-            e.preventDefault()
-            return
-          }
+          e.preventDefault()
+          if (!canSubmit()) return
           setHelper(null)
+          router.push(buildSearchUrl())
         }}
         onKeyDown={(e) => {
-          // prevent accidental submit while using enter-to-next
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
           if (el instanceof HTMLTextAreaElement) return
@@ -574,7 +400,6 @@ export default function SearchForm({
         <div key={shakeKey} className={helper ? 'rw-shake' : ''}>
           <input
             ref={qRef}
-            name="q"
             value={qInput}
             onChange={(e) => {
               setQInput(e.target.value)
@@ -583,7 +408,6 @@ export default function SearchForm({
             onKeyDown={enterNext}
             placeholder="Last 4 of license plate + First name (ex: 8841-mike)"
             className="w-full rounded-md border border-gray-900 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
-
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
@@ -593,15 +417,13 @@ export default function SearchForm({
 
         {/* Helper */}
         {helper && (
-          <div className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-900">
-            {helper}
-          </div>
+          <div className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-900">{helper}</div>
         )}
 
         <p className="text-sm text-gray-700">
-          <span className="font-semibold">Recommended:</span> Searches are most precise with{' '}
-          <span className="font-semibold">plate + name</span>. If you only know the plate, add at least one optional detail
-          (state/city/car) to narrow results.
+          <span className="font-semibold">Recommended:</span> Searches are most precise with <span className="font-semibold">plate + name</span>.
+          If you only know the plate, add <span className="font-semibold">state</span> or <span className="font-semibold">car make</span> to narrow
+          results.
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -609,7 +431,6 @@ export default function SearchForm({
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
-              name="state"
               value={stateInput}
               onChange={(e) => onStateChange(e.target.value)}
               onFocus={() => setStateOpen(true)}
@@ -659,120 +480,11 @@ export default function SearchForm({
             )}
           </div>
 
-          {/* City */}
-          <div ref={cityBoxRef} className="relative">
-            <input
-              ref={cityRef}
-              name="city"
-              value={cityInput}
-              onChange={(e) => {
-                setCityInput(e.target.value)
-                if (statePicked) setCityOpen(true)
-              }}
-              onFocus={() => {
-                if (statePicked) setCityOpen(true)
-              }}
-              onKeyDown={onCityKeyDown}
-              placeholder={statePicked ? 'City (optional) — ex: Chicago' : 'City (optional) — pick a state first'}
-              disabled={!statePicked}
-              className={[inputClass, !statePicked ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
-              autoCorrect="off"
-              spellCheck={false}
-            />
-
-            {statePicked && effectiveCityOpen && (
-              <div className={dropdownClass}>
-                <div
-                  ref={cityListRef}
-                  className={dropdownScrollClass}
-                  style={{ touchAction: 'pan-y' }}
-                  onPointerDown={optionPointerDown}
-                  onPointerMove={optionPointerMove}
-                >
-                  {effectiveCityLoading ? (
-                    <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
-                  ) : effectiveCitySuggestions.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches.' : 'Start typing to filter.'}
-                    </div>
-                  ) : (
-                    <>
-                      {effectiveCitySuggestions.map((s, idx) => (
-                        <button
-                          key={`${s.display_name}-${idx}`}
-                          type="button"
-                          data-city-idx={idx}
-                          onMouseEnter={() => setCityActiveIndex(idx)}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onPointerDown={optionPointerDown}
-                          onPointerMove={optionPointerMove}
-                          onPointerUp={(e) => {
-                            if (isTouchTap(e)) pickCitySuggestion(s)
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            pickCitySuggestion(s)
-                          }}
-                          className={itemClass(effectiveCityActiveIndex === idx)}
-                        >
-                          <HighlightMatch text={s.display_name} q={cityInput} />
-                        </button>
-                      ))}
-
-                      {showLoadMoreCities && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onPointerDown={optionPointerDown}
-                          onPointerMove={optionPointerMove}
-                          onPointerUp={(e) => {
-                            if (isTouchTap(e)) setCityLimit((p) => Math.min(p + 200, 2000))
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            setCityLimit((p) => Math.min(p + 200, 2000))
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        >
-                          Load more cities…
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <input
-            ref={colorRef}
-            name="car_color"
-            value={carColor}
-            onChange={(e) => setCarColor(e.target.value)}
-            onKeyDown={enterNext}
-            placeholder="Car color (optional) — ex: Silver"
-            className={inputClass}
-            autoCorrect="off"
-            spellCheck={false}
-          />
-
+          {/* Car make */}
           <input
             ref={makeRef}
-            name="car_make"
             value={carMake}
             onChange={(e) => setCarMake(e.target.value)}
-            onKeyDown={enterNext}
-            placeholder="Car make (optional) — ex: Toyota"
-            className={inputClass}
-            autoCorrect="off"
-            spellCheck={false}
-          />
-
-          <input
-            ref={modelRef}
-            name="car_model"
-            value={carModel}
-            onChange={(e) => setCarModel(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -781,7 +493,7 @@ export default function SearchForm({
               }
               enterNext(e)
             }}
-            placeholder="Car model (optional) — ex: RAV4 Hybrid"
+            placeholder="Car make (optional) — ex: Honda"
             className={inputClass}
             autoCorrect="off"
             spellCheck={false}
@@ -793,7 +505,7 @@ export default function SearchForm({
         <button
           ref={submitRef}
           type="submit"
-          className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black hover:opacity-90 transition"
+          className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-black transition hover:opacity-90"
         >
           Search
         </button>

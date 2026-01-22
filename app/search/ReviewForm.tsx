@@ -1,8 +1,11 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { useEnterToNext } from '@/lib/useEnterToNext'
+
+/* -------------------- types -------------------- */
 
 type TagRow = {
   id: string
@@ -13,6 +16,8 @@ type TagRow = {
 }
 
 type JsonObject = Record<string, unknown>
+
+/* -------------------- constants -------------------- */
 
 const MAX_COMMENT_CHARS = 500
 
@@ -43,6 +48,8 @@ const TAG_PRIORITY: Record<string, number> = {
   'smooth-ride': 7,
   'good-navigation': 8,
 }
+
+/* -------------------- helpers -------------------- */
 
 function isJsonObject(v: unknown): v is JsonObject {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -114,12 +121,7 @@ function TagGroup({
         {list.map((t) => {
           const selected = selectedTagIds.has(t.id)
           return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => toggleTag(t.id)}
-              className={chipClass(t.category, selected)}
-            >
+            <button key={t.id} type="button" onClick={() => toggleTag(t.id)} className={chipClass(t.category, selected)}>
               {t.label}
             </button>
           )
@@ -129,9 +131,18 @@ function TagGroup({
   )
 }
 
+/* -------------------- component -------------------- */
+
 export default function ReviewForm({ driverId }: { driverId: string }) {
   const router = useRouter()
 
+  /* -------------------- enter-to-next -------------------- */
+  const starsRef = useRef<HTMLSelectElement | null>(null)
+  const commentRef = useRef<HTMLTextAreaElement | null>(null)
+  const submitRef = useRef<HTMLButtonElement | null>(null)
+  const enterNext = useEnterToNext([starsRef, commentRef, submitRef])
+
+  /* -------------------- form state -------------------- */
   const [stars, setStars] = useState<number>(5)
   const [comment, setComment] = useState<string>('')
 
@@ -142,11 +153,11 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  // derived
+  /* -------------------- derived -------------------- */
   const commentCount = comment.length
   const overLimit = commentCount > MAX_COMMENT_CHARS
 
-  // Load tag options (safe client-side)
+  /* -------------------- load tag options -------------------- */
   useEffect(() => {
     let mounted = true
 
@@ -172,12 +183,11 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     }
   }, [])
 
-  // After refresh: show toast + scroll to last posted review
+  /* -------------------- toast + scroll after refresh -------------------- */
   useEffect(() => {
     const last = sessionStorage.getItem('rw:lastPostedReviewId')
     if (!last) return
 
-    // ✅ avoid "setState synchronously within effect"
     const t = setTimeout(() => setToast('Review posted!'), 0)
 
     ;(async () => {
@@ -188,20 +198,15 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     return () => clearTimeout(t)
   }, [])
 
-  // Toast auto-hide
   useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), 2200)
     return () => clearTimeout(t)
   }, [toast])
 
-  // ✅ group + sort by priority within each category
+  /* -------------------- group + sort tags by priority -------------------- */
   const grouped = useMemo(() => {
-    const byCat: Record<string, TagRow[]> = {
-      negative: [],
-      neutral: [],
-      positive: [],
-    }
+    const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
 
     for (const t of tags) {
       const cat = String(t.category || '').trim().toLowerCase()
@@ -230,8 +235,10 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
     })
   }, [])
 
+  /* -------------------- submit -------------------- */
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (loading) return
 
     if (overLimit) {
       setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
@@ -247,12 +254,7 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
       const res = await fetch('/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driverId,
-          stars,
-          comment,
-          tagIds,
-        }),
+        body: JSON.stringify({ driverId, stars, comment, tagIds }),
       })
 
       const jsonUnknown: unknown = await res.json().catch(() => ({}))
@@ -260,45 +262,41 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
 
       if (!res.ok) {
         const apiErr = typeof json.error === 'string' ? json.error : 'Failed to post review.'
-        setLoading(false)
         setError(apiErr)
+        setLoading(false)
         return
       }
 
       const reviewObj = isJsonObject(json.review) ? json.review : null
       const newReviewId = typeof reviewObj?.id === 'string' ? reviewObj.id : undefined
 
-      // Reset form immediately
+      // reset form
       setComment('')
       setStars(5)
       setSelectedTagIds(new Set())
 
-      // Toast
       setToast('Review posted!')
 
-      // Store id so we can scroll after router.refresh renders the new review
       if (newReviewId) {
         sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
       }
 
       setLoading(false)
 
-      // Refresh server data
       router.refresh()
 
-      // Optional: attempt immediate scroll too
-      if (newReviewId) {
-        scrollToReviewId(newReviewId)
-      }
+      // try immediate scroll too (best effort)
+      if (newReviewId) scrollToReviewId(newReviewId)
     } catch (err: unknown) {
       setLoading(false)
       setError(errorMessage(err, 'Failed to post review.'))
     }
   }
 
+  /* -------------------- render -------------------- */
+
   return (
     <>
-      {/* Toast */}
       {toast && (
         <div className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm">
           {toast}
@@ -309,9 +307,19 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
           <select
+            ref={starsRef}
             value={stars}
             onChange={(e) => setStars(Number(e.target.value))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commentRef.current?.focus()
+                return
+              }
+              enterNext(e)
+            }}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
+            disabled={loading}
           >
             {[5, 4, 3, 2, 1].map((n) => (
               <option key={n} value={n}>
@@ -328,10 +336,10 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
           <TagGroup title="Negative" list={grouped.negative ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
         </div>
 
-        {/* Comment box with counter + red state when over */}
         <div className="space-y-2">
           <div className="relative">
             <textarea
+              ref={commentRef}
               value={comment}
               onChange={(e) => {
                 const v = e.target.value
@@ -340,35 +348,51 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
                   setError(null)
                 }
               }}
+              onKeyDown={(e) => {
+                // let Enter create new lines in the textarea
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  // optional: Cmd/Ctrl+Enter to submit
+                  e.preventDefault()
+                  submitRef.current?.click()
+                  return
+                }
+              }}
               placeholder="Write what happened…"
               rows={3}
+              disabled={loading}
               className={[
                 'w-full rounded-md border bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 outline-none transition',
                 overLimit
                   ? 'border-red-500 ring-1 ring-red-500 focus:ring-2 focus:ring-red-500'
                   : 'border-gray-300 focus:ring-2 focus:ring-black/20',
+                loading ? 'opacity-60 cursor-not-allowed' : '',
               ].join(' ')}
             />
 
-            <div className={['absolute bottom-2 right-3 text-xs tabular-nums', overLimit ? 'text-red-600' : 'text-gray-600'].join(' ')}>
+            <div
+              className={[
+                'absolute bottom-2 right-3 text-xs tabular-nums',
+                overLimit ? 'text-red-600' : 'text-gray-600',
+              ].join(' ')}
+            >
               {commentCount}/{MAX_COMMENT_CHARS}
             </div>
           </div>
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
+              continue.
             </p>
           )}
 
-          <p className="text-xs text-gray-600">
-            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-          </p>
+          <p className="text-xs text-gray-600">Note: some language may be automatically censored. Hate speech/slurs are not allowed.</p>
         </div>
 
         {error && <p className="text-red-600">{error}</p>}
 
         <button
+          ref={submitRef}
           type="submit"
           disabled={loading || overLimit}
           className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
@@ -376,6 +400,10 @@ export default function ReviewForm({ driverId }: { driverId: string }) {
         >
           {loading ? 'Posting…' : 'Post review'}
         </button>
+
+        <p className="text-xs text-gray-600">
+          Tip: Press <span className="font-semibold">Cmd/Ctrl + Enter</span> to submit quickly.
+        </p>
       </form>
     </>
   )

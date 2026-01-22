@@ -16,18 +16,12 @@ type TagRow = {
   is_active?: boolean
 }
 
-type CitySuggestionRow = { name: string; display_name: string }
-type CitySuggestion = { name: string; display_name: string }
-
 type InsertedDriver = { id: string; driver_handle: string }
 
 type Props = {
   initialRaw: string
   initialState?: string | null
-  initialCity?: string | null
-  initialCarColor?: string | null
   initialCarMake?: string | null
-  initialCarModel?: string | null
 }
 
 type JsonObject = Record<string, unknown>
@@ -229,12 +223,7 @@ function TagGroup({
         {list.map((t) => {
           const selected = selectedTagIds.has(t.id)
           return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => toggleTag(t.id)}
-              className={chipClass(t.category, selected)}
-            >
+            <button key={t.id} type="button" onClick={() => toggleTag(t.id)} className={chipClass(t.category, selected)}>
               {t.label}
             </button>
           )
@@ -246,14 +235,7 @@ function TagGroup({
 
 /* -------------------- component -------------------- */
 
-export default function CreateDriverForm({
-  initialRaw,
-  initialState,
-  initialCity,
-  initialCarColor,
-  initialCarMake,
-  initialCarModel,
-}: Props) {
+export default function CreateDriverForm({ initialRaw, initialState, initialCarMake }: Props) {
   const router = useRouter()
 
   /* -------------------- handle (editable) -------------------- */
@@ -262,33 +244,19 @@ export default function CreateDriverForm({
 
   const handle = useMemo(() => normalizeHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
-
   const displayLabel = useMemo(() => displayNameFromHandle(handle), [handle])
 
-  /* -------------------- enter-to-next refs -------------------- */
-  const carColorRef = useRef<HTMLInputElement | null>(null)
+  /* -------------------- refs for enter-to-next -------------------- */
   const carMakeRef = useRef<HTMLInputElement | null>(null)
-  const carModelRef = useRef<HTMLInputElement | null>(null)
   const stateRef = useRef<HTMLInputElement | null>(null)
   const starsRef = useRef<HTMLSelectElement | null>(null)
   const commentRef = useRef<HTMLTextAreaElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
-  const enterNext = useEnterToNext([
-    handleRef,
-    carColorRef,
-    carMakeRef,
-    carModelRef,
-    stateRef,
-    starsRef,
-    commentRef,
-    submitRef,
-  ])
+  const enterNext = useEnterToNext([handleRef, carMakeRef, stateRef, starsRef, commentRef, submitRef])
 
-  /* -------------------- driver fields -------------------- */
-  const [carColor, setCarColor] = useState(initialCarColor ?? '')
+  /* -------------------- fields -------------------- */
   const [carMake, setCarMake] = useState(initialCarMake ?? '')
-  const [carModel, setCarModel] = useState(initialCarModel ?? '')
 
   /* -------------------- state typeahead (required) -------------------- */
   const initialStateCode = (initialState ?? '').toString().trim().toUpperCase()
@@ -298,36 +266,25 @@ export default function CreateDriverForm({
   const [state, setState] = useState(initialStateIsValid ? initialStateCode : '')
   const [stateOpen, setStateOpen] = useState(false)
   const [stateActiveIndex, setStateActiveIndex] = useState(-1)
+
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
   const stateListRef = useRef<HTMLDivElement | null>(null)
 
   const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
   const statePicked = state.trim().length === 2
 
-  /* -------------------- city typeahead (optional) -------------------- */
-  const [cityInput, setCityInput] = useState((initialCity ?? '').toString())
-  const [cityNotListed, setCityNotListed] = useState(false)
-  const [cityOpen, setCityOpen] = useState(false)
-  const [cityLoading, setCityLoading] = useState(false)
-  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([])
-  const [cityLimit, setCityLimit] = useState(100)
-  const [cityActiveIndex, setCityActiveIndex] = useState(-1)
+  /* -------------------- review fields -------------------- */
+  const [stars, setStars] = useState<number>(5)
+  const [comment, setComment] = useState('')
+  const [tags, setTags] = useState<TagRow[]>([])
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
 
-  const cityBoxRef = useRef<HTMLDivElement | null>(null)
-  const cityInputRef = useRef<HTMLInputElement | null>(null)
-  const cityListRef = useRef<HTMLDivElement | null>(null)
-  const cityBannerRef = useRef<HTMLDivElement | null>(null)
+  /* -------------------- ui -------------------- */
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const suppressCityOpenRef = useRef(false)
-  const cityFetchId = useRef(0)
-  const didMountRef = useRef(false)
-
-  useEffect(() => {
-    didMountRef.current = true
-    suppressCityOpenRef.current = true
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-  }, [])
+  const commentCount = comment.length
+  const overLimit = commentCount > MAX_COMMENT_CHARS
 
   /* -------------------- mobile tap vs scroll guard -------------------- */
   const touchStartYRef = useRef(0)
@@ -349,111 +306,25 @@ export default function CreateDriverForm({
     return e.pointerType === 'touch' && !touchMovedRef.current
   }
 
-  /* -------------------- review fields -------------------- */
-  const [stars, setStars] = useState<number>(5)
-  const [comment, setComment] = useState('')
-  const [tags, setTags] = useState<TagRow[]>([])
-  const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
-
-  /* -------------------- ui -------------------- */
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // City decision flow (only when typed city isn't in list)
-  const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(
-    initialCity && String(initialCity).trim() ? 'enter_anyway' : null
-  )
-  const [cityTouched, setCityTouched] = useState(false)
-  const [submitAttempted, setSubmitAttempted] = useState(false)
-
-  const commentCount = comment.length
-  const overLimit = commentCount > MAX_COMMENT_CHARS
-
-  const normalizedCityInput = cityInput.trim().toLowerCase()
-  const cityLooksValid =
-    !normalizedCityInput ||
-    cityNotListed ||
-    citySuggestions.some((c) => c.display_name.trim().toLowerCase() === normalizedCityInput)
-
-  const typedCity = cityInput.trim().length > 0
-  const noCityMatches = statePicked && cityOpen && !cityLoading && !cityNotListed && typedCity && citySuggestions.length === 0
-
-  const showCityBanner =
-    statePicked &&
-    !loading &&
-    !cityNotListed &&
-    typedCity &&
-    !cityLooksValid &&
-    !cityDecision &&
-    (cityTouched || submitAttempted || noCityMatches)
-
   function scrollActiveStateIntoView(nextIdx: number) {
     if (!stateListRef.current) return
     const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
     el?.scrollIntoView({ block: 'nearest' })
   }
 
-  function scrollActiveCityIntoView(nextIdx: number) {
-    if (!cityListRef.current) return
-    const el = cityListRef.current.querySelector<HTMLElement>(`[data-city-idx="${nextIdx}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
-  }
-
-  const resetCity = useCallback(() => {
-    setCityInput('')
-    setCityNotListed(false)
-    setCitySuggestions([])
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-    setCityLimit(100)
-
-    setCityTouched(false)
-    setSubmitAttempted(false)
-    setCityDecision(null)
-
-    suppressCityOpenRef.current = false
-  }, [])
-
-  const markCityNeedsDecision = useCallback(() => {
-    if (!statePicked) return
-    if (cityNotListed) return
-    if (cityLoading) return
-
-    const typed = cityInput.trim().length > 0
-    if (!typed) return
-    if (cityLooksValid) return
-    if (cityDecision) return
-
-    setSubmitAttempted(true)
-  }, [statePicked, cityNotListed, cityLoading, cityInput, cityLooksValid, cityDecision])
-
-  /* -------------------- outside click close (banner counts as inside) -------------------- */
+  /* -------------------- outside click close -------------------- */
   useEffect(() => {
     function onDocPointerDown(e: PointerEvent) {
       const target = e.target as Node
-
       if (stateBoxRef.current && !stateBoxRef.current.contains(target)) {
         setStateOpen(false)
         setStateActiveIndex(-1)
-      }
-
-      if (cityOpen) {
-        const clickedInsideCity =
-          (cityBoxRef.current && cityBoxRef.current.contains(target)) ||
-          (cityBannerRef.current && cityBannerRef.current.contains(target))
-
-        if (!clickedInsideCity) {
-          suppressCityOpenRef.current = true
-          setCityOpen(false)
-          setCityActiveIndex(-1)
-          markCityNeedsDecision()
-        }
       }
     }
 
     document.addEventListener('pointerdown', onDocPointerDown)
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
-  }, [cityOpen, markCityNeedsDecision])
+  }, [])
 
   /* -------------------- load tag options -------------------- */
   useEffect(() => {
@@ -523,23 +394,13 @@ export default function CreateDriverForm({
       setStateOpen(false)
       setStateActiveIndex(-1)
 
-      resetCity()
       if (error) setError(null)
-    },
-    [resetCity, error]
-  )
 
-  // ✅ improved: focus city AND open dropdown so suggestions show immediately
-  const commitState = useCallback(
-    (code: string) => {
-      pickState(code)
       setTimeout(() => {
-        suppressCityOpenRef.current = false
-        setCityOpen(true)
-        cityInputRef.current?.focus()
+        starsRef.current?.focus()
       }, 0)
     },
-    [pickState]
+    [error]
   )
 
   function onStateChange(v: string) {
@@ -551,10 +412,8 @@ export default function CreateDriverForm({
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
-      // keep city as-is while typing a valid 2-letter code
     } else {
       setState('')
-      resetCity()
     }
   }
 
@@ -593,299 +452,39 @@ export default function CreateDriverForm({
 
     if (e.key === 'Enter' || e.key === 'Tab') {
       const raw = stateInput.trim()
-      if (!raw) {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          suppressCityOpenRef.current = false
-          setCityOpen(true)
-          cityInputRef.current?.focus()
-        }
-        return
-      }
+      if (!raw) return
 
       const upper = raw.toUpperCase()
 
       const exactCode = STATES.find((s) => s.code === upper)
       if (exactCode) {
         e.preventDefault()
-        commitState(exactCode.code)
+        pickState(exactCode.code)
         return
       }
 
       const exactName = STATES.find((s) => s.name.toUpperCase() === upper)
       if (exactName) {
         e.preventDefault()
-        commitState(exactName.code)
+        pickState(exactName.code)
         return
       }
 
       if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
         e.preventDefault()
-        commitState(stateMatches[stateActiveIndex].code)
+        pickState(stateMatches[stateActiveIndex].code)
         return
       }
 
       const best = stateMatches[0]
       if (best) {
         e.preventDefault()
-        commitState(best.code)
+        pickState(best.code)
       }
     }
   }
 
-  /* -------------------- fetch city suggestions (RPC) -------------------- */
-  useEffect(() => {
-    if (!statePicked) {
-      setCitySuggestions([])
-      setCityOpen(false)
-      setCityLoading(false)
-      setCityActiveIndex(-1)
-      return
-    }
-    if (cityNotListed) return
-    if (!didMountRef.current) return
-
-    const q = cityInput.trim()
-    const shouldFetchBrowse = cityOpen && q.length === 0
-    const shouldFetchSearch = q.length > 0
-    if (!shouldFetchBrowse && !shouldFetchSearch) return
-
-    if (suppressCityOpenRef.current && !cityOpen) return
-
-    const myId = ++cityFetchId.current
-
-    const t = setTimeout(async () => {
-      setCityLoading(true)
-
-      const { data, error: rpcErr } = await supabase.rpc('city_suggestions', {
-        p_state: state,
-        p_query: shouldFetchSearch ? q : '',
-        p_limit: cityLimit,
-      })
-
-      if (cityFetchId.current !== myId) return
-
-      if (rpcErr) {
-        setCitySuggestions([])
-        setCityLoading(false)
-        setCityActiveIndex(-1)
-        return
-      }
-
-      const rows = (data ?? []) as CitySuggestionRow[]
-      const seen = new Set<string>()
-      const suggestions: CitySuggestion[] = []
-
-      for (const r of rows) {
-        const label = (r.display_name ?? '').trim()
-        if (!label) continue
-        const key = label.toLowerCase()
-        if (seen.has(key)) continue
-        seen.add(key)
-        suggestions.push({ name: r.name, display_name: label })
-      }
-
-      setCitySuggestions(suggestions)
-      setCityLoading(false)
-
-      if (suppressCityOpenRef.current) {
-        suppressCityOpenRef.current = false
-        setCityOpen(false)
-      } else {
-        setCityOpen(true)
-      }
-
-      if (suggestions.length > 0) {
-        setCityActiveIndex(0)
-        setTimeout(() => scrollActiveCityIntoView(0), 0)
-      } else {
-        setCityActiveIndex(-1)
-      }
-    }, shouldFetchSearch ? 120 : 0)
-
-    return () => clearTimeout(t)
-  }, [statePicked, state, cityInput, cityNotListed, cityOpen, cityLimit])
-
-  const onCityFocus = useCallback(() => {
-    if (!statePicked) return
-    suppressCityOpenRef.current = false
-    setCityOpen(true)
-  }, [statePicked])
-
-  const onCityChange = useCallback(
-    (v: string) => {
-      setCityInput(v)
-      setCityNotListed(false)
-
-      setCityDecision(null)
-      setSubmitAttempted(false)
-      setCityTouched(false)
-
-      suppressCityOpenRef.current = false
-      if (statePicked) setCityOpen(true)
-    },
-    [statePicked]
-  )
-
-  const pickCitySuggestion = useCallback((s: CitySuggestion) => {
-    suppressCityOpenRef.current = true
-    setCityInput(s.display_name)
-
-    setCityNotListed(false)
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-
-    setCityTouched(false)
-    setSubmitAttempted(false)
-    setCityDecision('picked_from_list')
-
-    setError(null)
-    setTimeout(() => starsRef.current?.focus(), 0)
-  }, [])
-
-  const chooseNotListed = useCallback(() => {
-    suppressCityOpenRef.current = true
-    setCityInput('')
-    setCityNotListed(true)
-
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-
-    setCityTouched(false)
-    setSubmitAttempted(false)
-    setCityDecision('leave_blank')
-
-    setTimeout(() => starsRef.current?.focus(), 0)
-  }, [])
-
-  const onCityEnterAnyway = useCallback(() => {
-    suppressCityOpenRef.current = true
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-
-    setCityDecision('enter_anyway')
-    setError(null)
-    setSubmitAttempted(false)
-    setCityTouched(false)
-
-    setTimeout(() => starsRef.current?.focus(), 0)
-  }, [])
-
-  const onCityPickFromList = useCallback(() => {
-    setCityDecision('picked_from_list')
-    setCityTouched(false)
-    setSubmitAttempted(false)
-
-    suppressCityOpenRef.current = false
-    setCityOpen(true)
-    setCityActiveIndex(-1)
-    setTimeout(() => cityInputRef.current?.focus(), 0)
-  }, [])
-
-  function onCityKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!statePicked || loading) return
-
-    const hasMenu = cityOpen && !cityNotListed
-    const anyResults = citySuggestions.length > 0
-    const maxIdx = anyResults ? citySuggestions.length - 1 : -1
-
-    if (!cityOpen && e.key === 'Enter') {
-      e.preventDefault()
-      if (cityInput.trim().length > 0 && !cityNotListed && !cityLooksValid && !cityDecision) {
-        setSubmitAttempted(true)
-        return
-      }
-      starsRef.current?.focus()
-      return
-    }
-
-    if (e.key === 'Tab') {
-      if (cityOpen) {
-        suppressCityOpenRef.current = true
-        setCityOpen(false)
-        setCityActiveIndex(-1)
-      }
-      if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
-      markCityNeedsDecision()
-      return
-    }
-
-    if (e.key === 'Escape') {
-      if (cityOpen) {
-        e.preventDefault()
-        suppressCityOpenRef.current = true
-        setCityOpen(false)
-        setCityActiveIndex(-1)
-        markCityNeedsDecision()
-      }
-      return
-    }
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-
-      if (!hasMenu) {
-        suppressCityOpenRef.current = false
-        setCityOpen(true)
-        setCityActiveIndex(-1)
-        return
-      }
-
-      setCityActiveIndex((prev) => {
-        let next = prev
-        if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : -1
-        else next = prev === -1 ? maxIdx : prev - 1
-        setTimeout(() => scrollActiveCityIntoView(next), 0)
-        return next
-      })
-      return
-    }
-
-    if (e.key === 'Enter') {
-      const typed = cityInput.trim().length > 0
-      const shouldEnterAnyway = typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
-
-      if (shouldEnterAnyway) {
-        e.preventDefault()
-        onCityEnterAnyway()
-        return
-      }
-
-      if (hasMenu) {
-        e.preventDefault()
-        if (cityLoading) return
-
-        if (cityActiveIndex >= 0) {
-          const picked = citySuggestions[cityActiveIndex]
-          if (picked) pickCitySuggestion(picked)
-          return
-        }
-
-        suppressCityOpenRef.current = true
-        setCityOpen(false)
-        setCityActiveIndex(-1)
-        starsRef.current?.focus()
-      }
-    }
-  }
-
-  function cityGatePasses(): boolean {
-    if (!statePicked) return true
-    if (cityNotListed) return true
-
-    const typed = cityInput.trim().length > 0
-    if (!typed) return true
-
-    if (cityLooksValid) return true
-    if (cityDecision === 'enter_anyway') return true
-
-    suppressCityOpenRef.current = true
-    setCityOpen(false)
-    setCityActiveIndex(-1)
-    setCityTouched(true)
-    setSubmitAttempted(true)
-    return false
-  }
+  /* -------------------- create driver -------------------- */
 
   async function createDriver(): Promise<InsertedDriver> {
     if (!statePicked) throw new Error('Please select a state.')
@@ -893,20 +492,13 @@ export default function CreateDriverForm({
       throw new Error('Driver handle format is invalid. Use: last 4 digits + first name (example: 8841-mike).')
     }
 
-    const typed = cityInput.trim()
-    const cityToSave =
-      cityNotListed ? null : !typed ? null : cityDecision === 'enter_anyway' ? typed : cityLooksValid ? typed : null
-
     const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
       .insert({
         driver_handle: handle,
         display_name: displayNameFromHandle(handle),
-        city: cityToSave,
         state,
         car_make: carMake.trim() || null,
-        car_model: carModel.trim() || null,
-        car_color: carColor.trim() || null,
       })
       .select('id, driver_handle')
       .single()
@@ -930,7 +522,6 @@ export default function CreateDriverForm({
 
   async function onCreateOnly() {
     if (loading) return
-    if (!cityGatePasses()) return
 
     setLoading(true)
     setError(null)
@@ -955,8 +546,6 @@ export default function CreateDriverForm({
       setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
       return
     }
-
-    if (!cityGatePasses()) return
 
     setLoading(true)
     setError(null)
@@ -1002,25 +591,16 @@ export default function CreateDriverForm({
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
 
-  const stateDropdownClass =
+  const dropdownClass =
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
-  const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
-  const stateItemClass = (active: boolean) =>
+  const itemClass = (active: boolean) =>
     [
       'w-full text-left px-3 py-2 text-sm transition',
       active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
     ].join(' ')
-
-  const cityItemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
-
-  const showLoadMoreCities = citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
   /* -------------------- render -------------------- */
 
@@ -1041,7 +621,6 @@ export default function CreateDriverForm({
         <span className="font-semibold">{displayLabel}</span>.
       </p>
 
-      {/* Optional: safe link back to search (Link import is now safe) */}
       <div className="text-xs text-gray-600">
         <Link href="/search" className="underline underline-offset-2 hover:text-gray-900">
           Back to search
@@ -1070,61 +649,26 @@ export default function CreateDriverForm({
           spellCheck={false}
         />
 
-        {/* car */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <input
-            ref={carColorRef}
-            value={carColor}
-            onChange={(e) => setCarColor(e.target.value)}
-            onKeyDown={enterNext}
-            placeholder="Car color (optional) — ex: Silver"
-            className={inputClass}
-            disabled={loading}
-          />
-          <input
-            ref={carMakeRef}
-            value={carMake}
-            onChange={(e) => setCarMake(e.target.value)}
-            onKeyDown={enterNext}
-            placeholder="Car make (optional) — ex: Toyota"
-            className={inputClass}
-            disabled={loading}
-          />
-          <input
-            ref={carModelRef}
-            value={carModel}
-            onChange={(e) => setCarModel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                stateRef.current?.focus()
-                setStateOpen(true)
-                return
-              }
-              enterNext(e)
-            }}
-            placeholder="Car model (optional) — ex: RAV4 Hybrid"
-            className={inputClass}
-            disabled={loading}
-          />
-        </div>
-
-        <div className="flex gap-3">
+        {/* state + make */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* state (required) */}
-          <div ref={stateBoxRef} className="relative w-40">
+          <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
               value={stateInput}
               onChange={(e) => onStateChange(e.target.value)}
               onFocus={() => setStateOpen(true)}
               onKeyDown={onStateKeyDown}
-              placeholder="State (IL)"
+              placeholder="State (required) — ex: IL"
               disabled={loading}
               className={[inputClass, loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
             />
 
             {stateOpen && !loading && (
-              <div className={stateDropdownClass}>
+              <div className={dropdownClass}>
                 <div
                   ref={stateListRef}
                   className={dropdownScrollClass}
@@ -1142,13 +686,13 @@ export default function CreateDriverForm({
                       onPointerDown={optionPointerDown}
                       onPointerMove={optionPointerMove}
                       onPointerUp={(e) => {
-                        if (isTouchTap(e)) commitState(s.code)
+                        if (isTouchTap(e)) pickState(s.code)
                       }}
                       onClick={(e) => {
                         e.preventDefault()
-                        commitState(s.code)
+                        pickState(s.code)
                       }}
-                      className={stateItemClass(stateActiveIndex === idx)}
+                      className={itemClass(stateActiveIndex === idx)}
                     >
                       <span className="font-semibold">{s.code}</span>
                       <span className="ml-2 text-gray-600">
@@ -1163,162 +707,18 @@ export default function CreateDriverForm({
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
           </div>
 
-          {/* city */}
-          <div ref={cityBoxRef} className="flex-1">
-            <input
-              ref={cityInputRef}
-              value={cityInput}
-              onChange={(e) => onCityChange(e.target.value)}
-              onFocus={onCityFocus}
-              onBlur={() => {
-                if (cityInput.trim().length > 0 && !cityNotListed) setCityTouched(true)
-                if (cityOpen) {
-                  suppressCityOpenRef.current = true
-                  setCityOpen(false)
-                  setCityActiveIndex(-1)
-                }
-                markCityNeedsDecision()
-              }}
-              onKeyDown={onCityKeyDown}
-              placeholder={statePicked ? 'City (optional)' : 'Pick a state first'}
-              disabled={!statePicked || loading}
-              className={[inputClass, !statePicked || loading ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
-            />
-
-            {statePicked && cityOpen && !loading && !cityNotListed && (
-              <div className={cityDropdownClass}>
-                <div
-                  ref={cityListRef}
-                  className={dropdownScrollClass}
-                  style={{ touchAction: 'pan-y' }}
-                  onPointerDown={optionPointerDown}
-                  onPointerMove={optionPointerMove}
-                >
-                  <button
-                    type="button"
-                    data-city-idx={-1}
-                    onMouseEnter={() => setCityActiveIndex(-1)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onPointerDown={optionPointerDown}
-                    onPointerMove={optionPointerMove}
-                    onPointerUp={(e) => {
-                      if (isTouchTap(e)) chooseNotListed()
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      chooseNotListed()
-                    }}
-                    className={cityItemClass(cityActiveIndex === -1)}
-                  >
-                    City not listed <span className="ml-2 text-xs text-gray-500">(leave city blank)</span>
-                  </button>
-
-                  <div className="h-px bg-gray-200" />
-
-                  {cityLoading ? (
-                    <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
-                  ) : citySuggestions.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-gray-600">
-                      {cityInput.trim().length ? 'No matches. Press Enter to use it anyway.' : 'Start typing to filter.'}
-                    </div>
-                  ) : (
-                    <>
-                      {citySuggestions.map((s, idx) => (
-                        <button
-                          key={`${s.display_name}-${idx}`}
-                          type="button"
-                          data-city-idx={idx}
-                          onMouseEnter={() => setCityActiveIndex(idx)}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onPointerDown={optionPointerDown}
-                          onPointerMove={optionPointerMove}
-                          onPointerUp={(e) => {
-                            if (isTouchTap(e)) pickCitySuggestion(s)
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            pickCitySuggestion(s)
-                          }}
-                          className={cityItemClass(cityActiveIndex === idx)}
-                        >
-                          <HighlightMatch text={s.display_name} q={cityInput} />
-                        </button>
-                      ))}
-
-                      {showLoadMoreCities && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onPointerDown={optionPointerDown}
-                          onPointerMove={optionPointerMove}
-                          onPointerUp={(e) => {
-                            if (isTouchTap(e)) setCityLimit((p) => Math.min(p + 200, 2000))
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            setCityLimit((p) => Math.min(p + 200, 2000))
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        >
-                          Load more cities…
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* banner */}
-            <div
-              ref={cityBannerRef}
-              className={[
-                'overflow-hidden transition-all duration-200',
-                showCityBanner ? 'max-h-40 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0',
-              ].join(' ')}
-            >
-              {showCityBanner && (
-                <div
-                  className="rounded-md border border-yellow-300 bg-yellow-50 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                  }}
-                >
-                  <div className="text-sm text-yellow-900">
-                    <div className="font-medium">City not found for {state}.</div>
-                    <div className="opacity-80">How do you want to proceed?</div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 sm:shrink-0">
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md bg-black text-white text-sm"
-                      onClick={onCityEnterAnyway}
-                    >
-                      Enter anyway
-                    </button>
-
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
-                      onClick={onCityPickFromList}
-                    >
-                      Pick from list
-                    </button>
-
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
-                      onClick={chooseNotListed}
-                    >
-                      Leave blank
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* car make (optional) */}
+          <input
+            ref={carMakeRef}
+            value={carMake}
+            onChange={(e) => setCarMake(e.target.value)}
+            onKeyDown={enterNext}
+            placeholder="Car make (optional) — ex: Toyota"
+            className={inputClass}
+            disabled={loading}
+            autoCorrect="off"
+            spellCheck={false}
+          />
         </div>
       </div>
 
@@ -1397,9 +797,7 @@ export default function CreateDriverForm({
             </p>
           )}
 
-          <p className="text-xs text-gray-600">
-            Note: some language may be automatically censored. Hate speech/slurs are not allowed.
-          </p>
+          <p className="text-xs text-gray-600">Note: some language may be automatically censored. Hate speech/slurs are not allowed.</p>
         </div>
       </div>
 
