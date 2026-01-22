@@ -16,11 +16,7 @@ type TagRow = {
 }
 
 type CitySuggestionRow = { name: string; display_name: string }
-
-type CitySuggestion = {
-  name: string
-  display_name: string
-}
+type CitySuggestion = { name: string; display_name: string }
 
 type InsertedDriver = { id: string; driver_handle: string }
 
@@ -135,7 +131,28 @@ function errorMessage(e: unknown, fallback: string) {
 }
 
 function normalizeHandle(raw: string) {
-  return raw.trim().toLowerCase().replace(/\s+/g, '-')
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
+}
+
+function titleCaseName(s: string) {
+  return s
+    .trim()
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+function displayNameFromHandle(normalizedHandle: string) {
+  const m = normalizedHandle.match(/^([a-z0-9]{1,4})-([a-z]{2,24})$/)
+  if (!m) return normalizedHandle
+  const plate = m[1]
+  const name = titleCaseName(m[2])
+  return `${name} (${plate})`
 }
 
 function bestStateMatches(qRaw: string, limit = 60) {
@@ -233,15 +250,16 @@ export default function CreateDriverForm({
 }: Props) {
   const router = useRouter()
 
-  /* -------------------- HANDLE (editable) -------------------- */
+  /* -------------------- handle (editable) -------------------- */
   const handleRef = useRef<HTMLInputElement | null>(null)
   const [handleInput, setHandleInput] = useState(initialRaw)
 
   const handle = useMemo(() => normalizeHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
 
-  /* -------------------- Enter-to-next refs -------------------- */
-  const displayNameRef = useRef<HTMLInputElement | null>(null)
+  const displayLabel = useMemo(() => displayNameFromHandle(handle), [handle])
+
+  /* -------------------- enter-to-next refs -------------------- */
   const carColorRef = useRef<HTMLInputElement | null>(null)
   const carMakeRef = useRef<HTMLInputElement | null>(null)
   const carModelRef = useRef<HTMLInputElement | null>(null)
@@ -250,26 +268,14 @@ export default function CreateDriverForm({
   const commentRef = useRef<HTMLTextAreaElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
-  const enterNext = useEnterToNext([
-    handleRef, // ✅ handle first
-    displayNameRef,
-    carColorRef,
-    carMakeRef,
-    carModelRef,
-    stateRef,
-    // city is special (dropdown + decision gate)
-    starsRef,
-    commentRef,
-    submitRef,
-  ])
+  const enterNext = useEnterToNext([handleRef, carColorRef, carMakeRef, carModelRef, stateRef, starsRef, commentRef, submitRef])
 
-  // driver fields
-  const [displayName, setDisplayName] = useState(initialRaw.trim())
+  /* -------------------- driver fields -------------------- */
   const [carColor, setCarColor] = useState(initialCarColor ?? '')
   const [carMake, setCarMake] = useState(initialCarMake ?? '')
   const [carModel, setCarModel] = useState(initialCarModel ?? '')
 
-  // State typeahead (required)
+  /* -------------------- state typeahead (required) -------------------- */
   const initialStateCode = (initialState ?? '').toString().trim().toUpperCase()
   const initialStateIsValid = STATES.some((s) => s.code === initialStateCode)
 
@@ -280,7 +286,10 @@ export default function CreateDriverForm({
   const stateBoxRef = useRef<HTMLDivElement | null>(null)
   const stateListRef = useRef<HTMLDivElement | null>(null)
 
-  // City typeahead (optional)
+  const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
+  const statePicked = state.trim().length === 2
+
+  /* -------------------- city typeahead (optional) -------------------- */
   const [cityInput, setCityInput] = useState((initialCity ?? '').toString())
   const [cityNotListed, setCityNotListed] = useState(false)
   const [cityOpen, setCityOpen] = useState(false)
@@ -297,7 +306,6 @@ export default function CreateDriverForm({
   const suppressCityOpenRef = useRef(false)
   const cityFetchId = useRef(0)
 
-  // ✅ prevent city dropdown being open immediately on redirect
   const didMountRef = useRef(false)
   useEffect(() => {
     didMountRef.current = true
@@ -306,7 +314,7 @@ export default function CreateDriverForm({
     setCityActiveIndex(-1)
   }, [])
 
-  // Mobile tap vs scroll guard
+  /* -------------------- mobile tap vs scroll guard -------------------- */
   const touchStartYRef = useRef(0)
   const touchMovedRef = useRef(false)
 
@@ -326,17 +334,17 @@ export default function CreateDriverForm({
     return e.pointerType === 'touch' && !touchMovedRef.current
   }
 
-  // review fields
+  /* -------------------- review fields -------------------- */
   const [stars, setStars] = useState<number>(5)
   const [comment, setComment] = useState('')
   const [tags, setTags] = useState<TagRow[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
 
-  // ui
+  /* -------------------- ui -------------------- */
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // City decision flow
+  // City decision flow (only when typed city isn't in list)
   const [cityDecision, setCityDecision] = useState<null | 'enter_anyway' | 'leave_blank' | 'picked_from_list'>(
     initialCity && String(initialCity).trim() ? 'enter_anyway' : null
   )
@@ -345,9 +353,6 @@ export default function CreateDriverForm({
 
   const commentCount = comment.length
   const overLimit = commentCount > MAX_COMMENT_CHARS
-
-  const statePicked = state.trim().length === 2
-  const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
 
   const normalizedCityInput = cityInput.trim().toLowerCase()
   const cityLooksValid =
@@ -408,7 +413,7 @@ export default function CreateDriverForm({
     setSubmitAttempted(true)
   }, [statePicked, cityNotListed, cityLoading, cityInput, cityLooksValid, cityDecision])
 
-  // Outside click close (banner counts as inside)
+  /* -------------------- outside click close (banner counts as inside) -------------------- */
   useEffect(() => {
     function onDocPointerDown(e: PointerEvent) {
       const target = e.target as Node
@@ -436,7 +441,7 @@ export default function CreateDriverForm({
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
   }, [cityOpen, markCityNeedsDecision])
 
-  // Load tag options
+  /* -------------------- load tag options -------------------- */
   useEffect(() => {
     let mounted = true
 
@@ -460,7 +465,7 @@ export default function CreateDriverForm({
     }
   }, [])
 
-  // Group + sort tags by priority within category
+  /* -------------------- group + sort tags by priority -------------------- */
   const grouped = useMemo(() => {
     const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
 
@@ -490,6 +495,8 @@ export default function CreateDriverForm({
       return next
     })
   }, [])
+
+  /* -------------------- state interactions -------------------- */
 
   const pickState = useCallback(
     (code: string) => {
@@ -525,6 +532,7 @@ export default function CreateDriverForm({
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
+      // keep city as-is while typing a valid 2-letter code
     } else {
       setState('')
       resetCity()
@@ -604,7 +612,7 @@ export default function CreateDriverForm({
     }
   }
 
-  // Fetch city suggestions (RPC)
+  /* -------------------- fetch city suggestions (RPC) -------------------- */
   useEffect(() => {
     if (!statePicked) {
       setCitySuggestions([])
@@ -614,14 +622,16 @@ export default function CreateDriverForm({
       return
     }
     if (cityNotListed) return
-
     if (!didMountRef.current) return
-    if (suppressCityOpenRef.current && !cityOpen) return
 
+    // Don’t fetch unless user is interacting with city or has typed something
     const q = cityInput.trim()
     const shouldFetchBrowse = cityOpen && q.length === 0
     const shouldFetchSearch = q.length > 0
     if (!shouldFetchBrowse && !shouldFetchSearch) return
+
+    // If we suppressed open and city is closed, do nothing.
+    if (suppressCityOpenRef.current && !cityOpen) return
 
     const myId = ++cityFetchId.current
 
@@ -731,7 +741,6 @@ export default function CreateDriverForm({
 
   const onCityEnterAnyway = useCallback(() => {
     suppressCityOpenRef.current = true
-
     setCityOpen(false)
     setCityActiveIndex(-1)
 
@@ -815,8 +824,7 @@ export default function CreateDriverForm({
 
     if (e.key === 'Enter') {
       const typed = cityInput.trim().length > 0
-      const shouldEnterAnyway =
-        typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
+      const shouldEnterAnyway = typed && !cityNotListed && !cityDecision && !cityLoading && citySuggestions.length === 0
 
       if (shouldEnterAnyway) {
         e.preventDefault()
@@ -863,9 +871,7 @@ export default function CreateDriverForm({
   async function createDriver(): Promise<InsertedDriver> {
     if (!statePicked) throw new Error('Please select a state.')
     if (!handleValid) {
-      throw new Error(
-        'Driver handle format is invalid. It must look like "8841-mike" (1–4 letters/numbers, dash, 2–24 letters).'
-      )
+      throw new Error('Driver handle format is invalid. Use: last 4 digits + first name (example: 8841-mike).')
     }
 
     const typed = cityInput.trim()
@@ -876,7 +882,7 @@ export default function CreateDriverForm({
       .from('drivers')
       .insert({
         driver_handle: handle,
-        display_name: displayName.trim() || handle,
+        display_name: displayNameFromHandle(handle),
         city: cityToSave,
         state,
         car_make: carMake.trim() || null,
@@ -958,6 +964,8 @@ export default function CreateDriverForm({
     }
   }
 
+  /* -------------------- styles -------------------- */
+
   const inputClass =
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
@@ -980,6 +988,8 @@ export default function CreateDriverForm({
 
   const showLoadMoreCities = citySuggestions.length > 0 && citySuggestions.length >= cityLimit && cityLimit < 2000
 
+  /* -------------------- render -------------------- */
+
   return (
     <form
       onSubmit={onCreateAndReview}
@@ -993,18 +1003,18 @@ export default function CreateDriverForm({
       }}
     >
       <p className="text-gray-900">
-        We couldn’t find this driver yet. Be the first to create and review <span className="font-semibold">@{handle}</span>.
+        We couldn’t find this driver yet. Be the first to create and review{' '}
+        <span className="font-semibold">{displayLabel}</span>.
       </p>
 
       {!handleValid && (
         <p className="text-sm text-red-600">
-          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a dash, then 2–24
-          letters).
+          This driver handle format is invalid. It must look like <strong>8841-mike</strong>.
         </p>
       )}
 
       <div className="space-y-3">
-        {/* ✅ HANDLE INPUT (editable) */}
+        {/* handle */}
         <input
           ref={handleRef}
           value={handleInput}
@@ -1019,16 +1029,7 @@ export default function CreateDriverForm({
           spellCheck={false}
         />
 
-        <input
-          ref={displayNameRef}
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          onKeyDown={enterNext}
-          placeholder="Display name (ex: Tom (4839))"
-          className={inputClass}
-          disabled={loading}
-        />
-
+        {/* car */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <input
             ref={carColorRef}
@@ -1068,7 +1069,7 @@ export default function CreateDriverForm({
         </div>
 
         <div className="flex gap-3">
-          {/* STATE */}
+          {/* state (required) */}
           <div ref={stateBoxRef} className="relative w-40">
             <input
               ref={stateRef}
@@ -1121,7 +1122,7 @@ export default function CreateDriverForm({
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
           </div>
 
-          {/* CITY */}
+          {/* city */}
           <div ref={cityBoxRef} className="flex-1">
             <input
               ref={cityInputRef}
@@ -1227,7 +1228,7 @@ export default function CreateDriverForm({
               </div>
             )}
 
-            {/* PUSH-DOWN BANNER */}
+            {/* banner */}
             <div
               ref={cityBannerRef}
               className={[
@@ -1272,7 +1273,7 @@ export default function CreateDriverForm({
         </div>
       </div>
 
-      {/* Review fields */}
+      {/* review fields */}
       <div className="space-y-4 pt-2">
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
@@ -1350,6 +1351,7 @@ export default function CreateDriverForm({
         type="submit"
         disabled={loading || overLimit || !statePicked || !handleValid}
         className="inline-flex h-11 items-center justify-center rounded-lg bg-green-600 px-5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        title={!statePicked ? 'Select a state to continue' : !handleValid ? 'Enter a valid handle (ex: 8841-mike)' : undefined}
       >
         {loading ? 'Posting…' : 'Create driver & post review'}
       </button>

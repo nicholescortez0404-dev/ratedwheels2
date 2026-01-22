@@ -64,12 +64,23 @@ const STATES: { code: string; name: string }[] = [
 // DB constraint: ^[a-z0-9]{1,4}-[a-z]{2,24}$
 const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
 
-function normalizeHandle(raw: string) {
-  return raw.trim().toLowerCase().replace(/\s+/g, '-')
+function normalizeQuery(raw: string) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-') // spaces/underscores -> dash
+    .replace(/-+/g, '-') // collapse repeated dashes
 }
 
-function isPlateLeadingQuery(q: string) {
-  return /^\d{4}($|[-].*)/.test(q)
+function parsePlateLeading(norm: string) {
+  // Accept plate-leading patterns:
+  //  - "2222"
+  //  - "2222-t"
+  //  - "2222-te"
+  //  - "2222-test"
+  const m = norm.match(/^(\d{4})(?:-([a-z]{1,24}))?$/)
+  if (!m) return null
+  return { plate: m[1], namePrefix: (m[2] ?? '').trim() }
 }
 
 function bestStateMatches(qRaw: string, limit = 60) {
@@ -136,7 +147,7 @@ export default function SearchForm({
   const enterNext = useEnterToNext([qRef, stateRef, cityRef, colorRef, makeRef, modelRef, submitRef])
 
   /* -------------------- form state -------------------- */
-  const [value, setValue] = useState(initialQuery)
+  const [qInput, setQInput] = useState(initialQuery)
   const [carColor, setCarColor] = useState(initialCarColor)
   const [carMake, setCarMake] = useState(initialCarMake)
   const [carModel, setCarModel] = useState(initialCarModel)
@@ -145,9 +156,9 @@ export default function SearchForm({
   const [helper, setHelper] = useState<string | null>(null)
   const [shakeKey, setShakeKey] = useState(0)
 
-  const normQ = useMemo(() => normalizeHandle(value), [value])
+  const normQ = useMemo(() => normalizeQuery(qInput), [qInput])
   const isExactHandle = useMemo(() => HANDLE_RE.test(normQ), [normQ])
-  const isPlateLeading = useMemo(() => isPlateLeadingQuery(normQ), [normQ])
+  const plateParsed = useMemo(() => parsePlateLeading(normQ), [normQ])
 
   /* -------------------- State dropdown -------------------- */
   const [stateInput, setStateInput] = useState((initialState || '').toUpperCase())
@@ -173,8 +184,7 @@ export default function SearchForm({
   const cityListRef = useRef<HTMLDivElement | null>(null)
   const cityFetchId = useRef(0)
 
-  // ✅ Instead of "resetting city in an effect", we derive an effective UI state.
-  // When state isn't picked, city behaves as closed + empty suggestions, without setState in an effect.
+  // Derived effective city behavior (keeps state updates out of effects)
   const effectiveCityOpen = statePicked ? cityOpen : false
   const effectiveCityLoading = statePicked ? cityLoading : false
   const effectiveCitySuggestions = statePicked ? citySuggestions : []
@@ -236,7 +246,7 @@ export default function SearchForm({
       setStateOpen(false)
       setStateActiveIndex(-1)
 
-      // ✅ Do the "reset city because state changed" HERE (not in an effect)
+      // state changed => reset city
       resetCity()
 
       setTimeout(() => {
@@ -256,9 +266,8 @@ export default function SearchForm({
     const maybeCode = cleaned.trim().slice(0, 2)
     if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
       setState(maybeCode)
-      // don't reset city while typing a valid 2-letter code; user might keep interacting
+      // don't reset city while typing a valid 2-letter code
     } else {
-      // ✅ When state becomes invalid/blank, reset city immediately here (still not an effect)
       setState('')
       resetCity()
     }
@@ -323,7 +332,6 @@ export default function SearchForm({
 
   /* -------------------- fetch city suggestions -------------------- */
   useEffect(() => {
-    // ✅ no reset setStates here; we simply don't fetch unless statePicked + cityOpen
     if (!statePicked) return
     if (!cityOpen) return
 
@@ -460,21 +468,37 @@ export default function SearchForm({
   function canSubmit(): boolean {
     const q = normQ
 
+    // empty
     if (!q) {
       triggerHelper('Enter the last 4 digits + first name (example: 8841-mike).')
       return false
     }
 
+    // exact handle always ok
     if (isExactHandle) return true
 
-    if (isPlateLeading) {
-      if (hasDisambiguatorsLive) return true
-      triggerHelper(
-        'That’s only the plate. Add at least one detail (state/city/car), or include the first name (example: 7483-mike).'
-      )
-      return false
+    // plate-leading patterns
+    if (plateParsed) {
+      // If they typed only plate (no -namePrefix), require disambiguator.
+      const typedOnlyPlate = q === plateParsed.plate
+      if (typedOnlyPlate && !hasDisambiguatorsLive) {
+        triggerHelper(
+          'That’s only the plate. Add at least one detail (state/city/car), or include the first name (example: 7483-mike).'
+        )
+        return false
+      }
+
+      // "2222-t" (single letter) is allowed.
+      // Also "2222-" (we don’t want that) — normalizeQuery won’t create trailing dash unless user typed it.
+      if (q.endsWith('-')) {
+        triggerHelper('Add at least one letter of the first name after the dash (example: 2222-t).')
+        return false
+      }
+
+      return true
     }
 
+    // anything else (like "mike") is not allowed
     triggerHelper('That doesn’t look like a handle. Use: last 4 + first name (example: 8841-mike).')
     return false
   }
@@ -538,6 +562,7 @@ export default function SearchForm({
           setHelper(null)
         }}
         onKeyDown={(e) => {
+          // prevent accidental submit while using enter-to-next
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
           if (el instanceof HTMLTextAreaElement) return
@@ -550,14 +575,19 @@ export default function SearchForm({
           <input
             ref={qRef}
             name="q"
-            value={value}
+            value={qInput}
             onChange={(e) => {
-              setValue(e.target.value)
+              setQInput(e.target.value)
               if (helper) setHelper(null)
             }}
             onKeyDown={enterNext}
             placeholder="Last 4 of license plate + First name (ex: 8841-mike)"
-            className="w-full rounded-md border border-gray-1000 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
+            className="w-full rounded-md border border-gray-900 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
+
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            inputMode="text"
           />
         </div>
 
@@ -586,6 +616,9 @@ export default function SearchForm({
               onKeyDown={onStateKeyDown}
               placeholder="State (optional) — ex: IL"
               className={inputClass}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
             />
 
             {stateOpen && (
@@ -643,6 +676,8 @@ export default function SearchForm({
               placeholder={statePicked ? 'City (optional) — ex: Chicago' : 'City (optional) — pick a state first'}
               disabled={!statePicked}
               className={[inputClass, !statePicked ? 'opacity-60 cursor-not-allowed' : ''].join(' ')}
+              autoCorrect="off"
+              spellCheck={false}
             />
 
             {statePicked && effectiveCityOpen && (
@@ -717,6 +752,8 @@ export default function SearchForm({
             onKeyDown={enterNext}
             placeholder="Car color (optional) — ex: Silver"
             className={inputClass}
+            autoCorrect="off"
+            spellCheck={false}
           />
 
           <input
@@ -727,6 +764,8 @@ export default function SearchForm({
             onKeyDown={enterNext}
             placeholder="Car make (optional) — ex: Toyota"
             className={inputClass}
+            autoCorrect="off"
+            spellCheck={false}
           />
 
           <input
@@ -744,6 +783,8 @@ export default function SearchForm({
             }}
             placeholder="Car model (optional) — ex: RAV4 Hybrid"
             className={inputClass}
+            autoCorrect="off"
+            spellCheck={false}
           />
 
           <div className="hidden md:block" />

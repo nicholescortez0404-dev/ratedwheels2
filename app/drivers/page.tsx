@@ -120,7 +120,6 @@ export default async function DriversPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-xl font-semibold">{d.display_name ?? d.driver_handle}</div>
-                      <div className="text-gray-700">@{d.driver_handle}</div>
 
                       <div className="text-gray-600">
                         {d.city ?? '—'}

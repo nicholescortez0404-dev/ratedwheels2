@@ -10,6 +10,8 @@ import CreateDriverForm from './CreateDriverForm'
 import SortSelect from './SortSelect'
 import { createSupabaseServerClient } from '@/lib/supabaseServer'
 
+/* -------------------- types -------------------- */
+
 type DriverStat = {
   driver_id: string
   avg_stars: number | null
@@ -34,9 +36,7 @@ type TagRow = {
   slug: string
 }
 
-type ReviewTagJoin = {
-  tag: TagRow | null
-}
+type ReviewTagJoin = { tag: TagRow | null }
 
 type ReviewRow = {
   id: string
@@ -48,27 +48,71 @@ type ReviewRow = {
   review_tags: ReviewTagJoin[] | null
 }
 
+/* -------------------- helpers -------------------- */
+
 function formatAvg(avg: number | null | undefined) {
   if (avg === null || avg === undefined || Number.isNaN(avg)) return '—'
   return Number(avg).toFixed(1)
 }
 
-function normalizeHandle(raw: string) {
-  return raw.trim().toLowerCase().replace(/\s+/g, '-')
+// DB constraint: ^[a-z0-9]{1,4}-[a-z]{2,24}$
+const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
+const PLATE_LEADING_RE = /^(\d{4})(?:-([a-z]{1,24}))?$/
+
+function normalizeQuery(raw: string) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
 }
 
-function isPlateLeadingQuery(q: string) {
-  return /^\d{4}($|[-].*)/.test(q)
+function parsePlateLeading(norm: string) {
+  const m = norm.match(PLATE_LEADING_RE)
+  if (!m) return null
+  return { plate: m[1], namePrefix: (m[2] ?? '').trim() }
 }
 
 function escapeIlikeLiteral(s: string) {
-  // Escape %, _, and \ for ilike patterns
+  // escape %, _, and \ for Supabase ilike patterns
   return s.replace(/[%_\\]/g, (m) => `\\${m}`)
 }
 
-function safeIlikePatternPrefix(q: string) {
+/**
+ * Builds an ilike prefix pattern safely:
+ *   input "2222-t" => "2222-t%"
+ */
+function safePrefixIlike(q: string) {
   return `${escapeIlikeLiteral(q)}%`
 }
+
+function hasAnyDisambiguator(params: {
+  state?: string
+  city?: string
+  car_color?: string
+  car_make?: string
+  car_model?: string
+}) {
+  return Boolean(
+    (params.state ?? '').trim() ||
+      (params.city ?? '').trim() ||
+      (params.car_color ?? '').trim() ||
+      (params.car_make ?? '').trim() ||
+      (params.car_model ?? '').trim()
+  )
+}
+
+function buildCityIlike(city: string) {
+  // If your DB stores "Chicago" (clean display) this works.
+  // If your DB stores "Chicago city", still works because it's contains.
+  return `%${escapeIlikeLiteral(city.trim())}%`
+}
+
+function buildContainsIlike(v: string) {
+  return `%${escapeIlikeLiteral(v.trim())}%`
+}
+
+/* -------------------- page -------------------- */
 
 export default async function SearchPage({
   searchParams,
@@ -87,27 +131,36 @@ export default async function SearchPage({
   const supabase = createSupabaseServerClient()
   const sp = await searchParams
 
-  const raw = (sp.q ?? '').trim()
-  const q = normalizeHandle(raw)
+  // raw query as user typed (for UI)
+  const rawQ = String(sp.q ?? '').trim()
 
+  // normalized query used for DB matching
+  const q = normalizeQuery(rawQ)
+
+  // optional filters
   const initialState = String(sp.state ?? '').trim().toUpperCase()
   const initialCity = String(sp.city ?? '').trim()
   const initialCarColor = String(sp.car_color ?? '').trim()
   const initialCarMake = String(sp.car_make ?? '').trim()
   const initialCarModel = String(sp.car_model ?? '').trim()
 
-  const hasDisambiguator =
-    Boolean(initialState) ||
-    Boolean(initialCity) ||
-    Boolean(initialCarColor) ||
-    Boolean(initialCarMake) ||
-    Boolean(initialCarModel)
+  const disambiguatorPresent = hasAnyDisambiguator({
+    state: initialState,
+    city: initialCity,
+    car_color: initialCarColor,
+    car_make: initialCarMake,
+    car_model: initialCarModel,
+  })
 
+  // sort
   const allowedSorts = new Set(['newest', 'oldest', 'highest', 'lowest'])
   const sortParam = String(sp.sort ?? 'newest').toLowerCase()
   const sortMode = allowedSorts.has(sortParam) ? sortParam : 'newest'
 
+  // results
   let driver: DriverRow | null = null
+  let suggestions: DriverRow[] = []
+
   let reviews: ReviewRow[] = []
   let avgStars: number | null = null
   let reviewCount = 0
@@ -120,7 +173,7 @@ export default async function SearchPage({
 
   const tagFreq: Record<
     string,
-    { id: string; label: string; category: string; slug: string; count: number }
+    { id: string; label: string; category: 'positive' | 'neutral' | 'negative' | string; slug: string; count: number }
   > = {}
 
   const tagsByCategory: Record<'positive' | 'neutral' | 'negative', { label: string; count: number }[]> = {
@@ -129,60 +182,96 @@ export default async function SearchPage({
     negative: [],
   }
 
-  // Suggestions for plate-leading partial searches:
-  // ONLY when exact not found AND disambiguator present
-  let suggestions: DriverRow[] = []
+  // UI state messages (what we discussed)
+  let helperMessage: string | null = null
+  let showCreateDriver = false
 
-  // This message is shown when user typed plate-leading but gave NO disambiguators
-  // (and exact match failed)
-  let shouldPromptForDisambiguator = false
+  const plateParsed = q ? parsePlateLeading(q) : null
+  const isExactHandle = q ? HANDLE_RE.test(q) : false
+  const isPlateLeading = Boolean(plateParsed)
+
+  // ---- Search rules:
+  // 1) "mike" (no plate) => no results + guidance (no create prompt)
+  // 2) "2222" (plate only) => do NOT dump; require a disambiguator OR name letter
+  // 3) "2222 t" => normalized to "2222-t" => prefix match driver_handle ILIKE "2222-t%"
+  // 4) exact handle always checks exact first
+  // 5) cap suggestions to 20-25
 
   if (q) {
-    // 1) Exact match first
-    const { data: d } = await supabase
-      .from('drivers')
-      .select('*')
-      .eq('driver_handle', q)
-      .maybeSingle()
-
-    driver = (d as DriverRow | null) ?? null
-
-    // decide prompt AFTER we know exact didn't match
-    shouldPromptForDisambiguator = Boolean(q) && !driver && isPlateLeadingQuery(q) && !hasDisambiguator
-
-    // 2) Suggestions only if plate-leading AND has disambiguator
-    if (!driver && isPlateLeadingQuery(q) && hasDisambiguator) {
-      let sq = supabase
+    // ------------- EXACT LOOKUP -------------
+    // only attempt exact if the query looks like an exact handle
+    if (isExactHandle) {
+      const { data: d, error } = await supabase
         .from('drivers')
         .select('id,driver_handle,display_name,city,state,car_color,car_make,car_model')
-        .ilike('driver_handle', safeIlikePatternPrefix(q))
-        .limit(25)
-
-      if (initialState) sq = sq.eq('state', initialState)
-      if (initialCity) sq = sq.ilike('city', `%${escapeIlikeLiteral(initialCity)}%`)
-      if (initialCarColor) sq = sq.ilike('car_color', `%${escapeIlikeLiteral(initialCarColor)}%`)
-      if (initialCarMake) sq = sq.ilike('car_make', `%${escapeIlikeLiteral(initialCarMake)}%`)
-      if (initialCarModel) sq = sq.ilike('car_model', `%${escapeIlikeLiteral(initialCarModel)}%`)
-
-      const { data: s } = await sq
-      suggestions = (s as DriverRow[] | null) ?? []
-    }
-
-    // 3) If found driver -> stats + reviews + tags
-    if (driver?.id) {
-      const { data: statRow } = await supabase
-        .from('driver_stats')
-        .select('driver_id,avg_stars,review_count')
-        .eq('driver_id', driver.id)
+        .eq('driver_handle', q)
         .maybeSingle()
 
-      avgStars = (statRow as DriverStat | null)?.avg_stars ?? null
-      reviewCount = (statRow as DriverStat | null)?.review_count ?? 0
+      if (!error) driver = (d as DriverRow | null) ?? null
+    }
 
-      let rq = supabase
-        .from('reviews')
-        .select(
-          `
+    // ------------- NOT FOUND => DECIDE NEXT -------------
+    if (!driver) {
+      // If it isn't plate-leading at all (like "mike"), we show guidance and stop.
+      if (!isPlateLeading) {
+        helperMessage = 'Search using the last 4 digits + first name (example: 8841-mike).'
+        showCreateDriver = false
+      } else {
+        // plate-leading cases
+        const { plate, namePrefix } = plateParsed!
+
+        const typedOnlyPlate = q === plate
+
+        // "2222" with no disambiguator => block suggestions, show helper
+        if (typedOnlyPlate && !disambiguatorPresent) {
+          helperMessage =
+            'That’s only the plate. Add a first-name letter (example: 2222-t) or add a detail (state/city/car) to narrow.'
+          showCreateDriver = true
+        } else {
+          // Allowed to suggest:
+          // - has name prefix: "2222-t" => prefix "2222-t%"
+          // - OR plate only but disambiguator exists: prefix "2222-%" (not "2222%" because handles are plate-name)
+          const prefix = namePrefix ? `${plate}-${namePrefix}` : `${plate}-`
+
+          let sq = supabase
+            .from('drivers')
+            .select('id,driver_handle,display_name,city,state,car_color,car_make,car_model')
+            .ilike('driver_handle', safePrefixIlike(prefix))
+            .limit(25)
+
+          if (initialState) sq = sq.eq('state', initialState)
+          if (initialCity) sq = sq.ilike('city', buildCityIlike(initialCity))
+          if (initialCarColor) sq = sq.ilike('car_color', buildContainsIlike(initialCarColor))
+          if (initialCarMake) sq = sq.ilike('car_make', buildContainsIlike(initialCarMake))
+          if (initialCarModel) sq = sq.ilike('car_model', buildContainsIlike(initialCarModel))
+
+          const { data: s, error: sErr } = await sq
+          if (!sErr) suggestions = (s as DriverRow[] | null) ?? []
+
+          // If we found exactly one suggestion AND it is an exact handle match, we can auto-open it.
+          // BUT: we promised “no dumping wrong driver”. So we only auto-open if user provided namePrefix OR full handle.
+          // (i.e., "2222-t" that matches exactly "2222-test" is NOT exact; keep it as suggestion list.)
+          showCreateDriver = true
+        }
+      }
+    }
+  }
+
+  // ------------- DRIVER FOUND => LOAD STATS + REVIEWS + TAGS -------------
+  if (driver?.id) {
+    const { data: statRow } = await supabase
+      .from('driver_stats')
+      .select('driver_id,avg_stars,review_count')
+      .eq('driver_id', driver.id)
+      .maybeSingle()
+
+    avgStars = (statRow as DriverStat | null)?.avg_stars ?? null
+    reviewCount = (statRow as DriverStat | null)?.review_count ?? 0
+
+    let rq = supabase
+      .from('reviews')
+      .select(
+        `
           id,
           driver_id,
           reviewer_id,
@@ -198,55 +287,54 @@ export default async function SearchPage({
             )
           )
         `
-        )
-        .eq('driver_id', driver.id)
+      )
+      .eq('driver_id', driver.id)
 
-      if (sortMode === 'highest') {
-        rq = rq.order('stars', { ascending: false }).order('created_at', { ascending: false })
-      } else if (sortMode === 'lowest') {
-        rq = rq.order('stars', { ascending: true }).order('created_at', { ascending: false })
-      } else if (sortMode === 'oldest') {
-        rq = rq.order('created_at', { ascending: true })
-      } else {
-        rq = rq.order('created_at', { ascending: false })
-      }
-
-      const { data: r } = await rq
-      reviews = (r as ReviewRow[] | null) ?? []
-
-      for (const rev of reviews) {
-        for (const rt of rev.review_tags ?? []) {
-          const tag = rt?.tag
-          if (!tag) continue
-
-          const cat = String(tag.category ?? '').trim().toLowerCase()
-          if (cat === 'positive' || cat === 'neutral' || cat === 'negative') {
-            traitCounts[cat]++
-          }
-
-          if (!tagFreq[tag.id]) {
-            tagFreq[tag.id] = {
-              id: tag.id,
-              label: tag.label,
-              category: cat,
-              slug: tag.slug,
-              count: 0,
-            }
-          }
-          tagFreq[tag.id].count++
-        }
-      }
-
-      for (const t of Object.values(tagFreq)) {
-        if (t.category === 'positive' || t.category === 'neutral' || t.category === 'negative') {
-          tagsByCategory[t.category].push({ label: t.label, count: t.count })
-        }
-      }
-
-      tagsByCategory.positive.sort((a, b) => b.count - a.count)
-      tagsByCategory.neutral.sort((a, b) => b.count - a.count)
-      tagsByCategory.negative.sort((a, b) => b.count - a.count)
+    if (sortMode === 'highest') {
+      rq = rq.order('stars', { ascending: false }).order('created_at', { ascending: false })
+    } else if (sortMode === 'lowest') {
+      rq = rq.order('stars', { ascending: true }).order('created_at', { ascending: false })
+    } else if (sortMode === 'oldest') {
+      rq = rq.order('created_at', { ascending: true })
+    } else {
+      rq = rq.order('created_at', { ascending: false })
     }
+
+    const { data: r } = await rq
+    reviews = (r as ReviewRow[] | null) ?? []
+
+    for (const rev of reviews) {
+      for (const rt of rev.review_tags ?? []) {
+        const tag = rt?.tag
+        if (!tag) continue
+
+        const cat = String(tag.category ?? '').trim().toLowerCase()
+        if (cat === 'positive' || cat === 'neutral' || cat === 'negative') {
+          traitCounts[cat]++
+        }
+
+        if (!tagFreq[tag.id]) {
+          tagFreq[tag.id] = {
+            id: tag.id,
+            label: tag.label,
+            category: cat,
+            slug: tag.slug,
+            count: 0,
+          }
+        }
+        tagFreq[tag.id].count++
+      }
+    }
+
+    for (const t of Object.values(tagFreq)) {
+      if (t.category === 'positive' || t.category === 'neutral' || t.category === 'negative') {
+        tagsByCategory[t.category].push({ label: t.label, count: t.count })
+      }
+    }
+
+    tagsByCategory.positive.sort((a, b) => b.count - a.count)
+    tagsByCategory.neutral.sort((a, b) => b.count - a.count)
+    tagsByCategory.negative.sort((a, b) => b.count - a.count)
   }
 
   const maxTrait = Math.max(traitCounts.positive, traitCounts.neutral, traitCounts.negative, 1)
@@ -264,14 +352,22 @@ export default async function SearchPage({
       {/* SEARCH */}
       <div className="flex flex-col items-center">
         <SearchForm
-          initialQuery={raw.replace(/-/g, ' ')}
+          initialQuery={rawQ}
           initialState={initialState}
           initialCity={initialCity}
           initialCarColor={initialCarColor}
           initialCarMake={initialCarMake}
           initialCarModel={initialCarModel}
         />
+
         {!q && <p className="mt-6 text-sm text-gray-600">Type a handle to search.</p>}
+
+        {/* Server-side helper (mirrors SearchForm gating rules) */}
+        {helperMessage && (
+          <div className="mt-6 w-full max-w-xl rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-900">
+            {helperMessage}
+          </div>
+        )}
       </div>
 
       {/* RESULTS */}
@@ -281,9 +377,9 @@ export default async function SearchPage({
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="flex items-start justify-between gap-6">
               <div>
-                <div className="text-xl font-semibold">{driver.display_name}</div>
-                <div className="text-gray-700">@{driver.driver_handle}</div>
+                <div className="text-xl font-semibold">{driver.display_name ?? driver.driver_handle}</div>
 
+                {/* ✅ remove redundant "@handle" line (display_name already includes it) */}
                 <div className="text-gray-600">
                   {driver.city ?? '—'}
                   {driver.state ? `, ${driver.state}` : ''}
@@ -446,12 +542,11 @@ export default async function SearchPage({
           <div className="rounded-lg border border-gray-300 p-4">
             <div className="text-lg font-semibold">Did you mean one of these?</div>
             <p className="text-sm text-gray-600 mt-1">
-              No exact match for <span className="font-semibold">{raw}</span>, but we found drivers that start with it —
-              narrowed using your optional details.
+              No exact match for <span className="font-semibold">{rawQ}</span>, but we found drivers that match your input.
             </p>
 
             <div className="mt-4 grid gap-3">
-              {suggestions.map((d) => (
+              {suggestions.slice(0, 20).map((d) => (
                 <Link
                   key={d.id}
                   href={`/search?q=${encodeURIComponent(d.driver_handle)}`}
@@ -460,7 +555,6 @@ export default async function SearchPage({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-base font-semibold">{d.display_name ?? d.driver_handle}</div>
-                      <div className="text-sm text-gray-700">@{d.driver_handle}</div>
                       <div className="text-sm text-gray-600">
                         {d.city ?? '—'}
                         {d.state ? `, ${d.state}` : ''}
@@ -494,40 +588,40 @@ export default async function SearchPage({
             </div>
           </div>
 
-          <div className="rounded-lg border border-gray-300 p-4">
-            <CreateDriverForm
-              initialRaw={raw}
-              initialState={initialState}
-              initialCity={initialCity}
-              initialCarColor={initialCarColor}
-              initialCarMake={initialCarMake}
-              initialCarModel={initialCarModel}
-            />
-          </div>
+          {showCreateDriver && (
+            <div className="rounded-lg border border-gray-300 p-4">
+              <CreateDriverForm
+                initialRaw={rawQ}
+                initialState={initialState}
+                initialCity={initialCity}
+                initialCarColor={initialCarColor}
+                initialCarMake={initialCarMake}
+                initialCarModel={initialCarModel}
+              />
+            </div>
+          )}
         </section>
       ) : (
         <section className="mt-8 space-y-4">
-          {shouldPromptForDisambiguator && (
+          {q && isPlateLeading && !driver && helperMessage && (
             <div className="rounded-lg border border-gray-300 bg-white/40 p-4">
-              <div className="text-lg font-semibold">Add one more detail</div>
-              <p className="mt-1 text-sm text-gray-700">
-                To avoid showing the wrong driver, partial searches like{' '}
-                <span className="font-semibold">{raw}</span> only show matches when you add at least one optional detail
-                (state/city/car). Or finish the full handle like <span className="font-semibold">7483-mike</span>.
-              </p>
+              <div className="text-lg font-semibold">Need one more detail</div>
+              <p className="mt-1 text-sm text-gray-700">{helperMessage}</p>
             </div>
           )}
 
-          <div className="rounded-lg border border-gray-300 p-4">
-            <CreateDriverForm
-              initialRaw={raw}
-              initialState={initialState}
-              initialCity={initialCity}
-              initialCarColor={initialCarColor}
-              initialCarMake={initialCarMake}
-              initialCarModel={initialCarModel}
-            />
-          </div>
+          {showCreateDriver && (
+            <div className="rounded-lg border border-gray-300 p-4">
+              <CreateDriverForm
+                initialRaw={rawQ}
+                initialState={initialState}
+                initialCity={initialCity}
+                initialCarColor={initialCarColor}
+                initialCarMake={initialCarMake}
+                initialCarModel={initialCarModel}
+              />
+            </div>
+          )}
         </section>
       )}
     </main>
