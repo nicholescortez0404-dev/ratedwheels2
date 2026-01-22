@@ -173,7 +173,6 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
   )
 }
 
-// Chip styling (outside render)
 function chipClass(category: string, selected: boolean) {
   const base =
     'rounded-full border px-3 py-1 text-sm font-medium transition select-none ' +
@@ -212,12 +211,7 @@ function TagGroup({
         {list.map((t) => {
           const selected = selectedTagIds.has(t.id)
           return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => toggleTag(t.id)}
-              className={chipClass(t.category, selected)}
-            >
+            <button key={t.id} type="button" onClick={() => toggleTag(t.id)} className={chipClass(t.category, selected)}>
               {t.label}
             </button>
           )
@@ -239,10 +233,14 @@ export default function CreateDriverForm({
 }: Props) {
   const router = useRouter()
 
-  const handle = useMemo(() => normalizeHandle(initialRaw), [initialRaw])
+  /* -------------------- HANDLE (editable) -------------------- */
+  const handleRef = useRef<HTMLInputElement | null>(null)
+  const [handleInput, setHandleInput] = useState(initialRaw)
+
+  const handle = useMemo(() => normalizeHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
 
-  // ✅ Enter-to-next refs (order matters)
+  /* -------------------- Enter-to-next refs -------------------- */
   const displayNameRef = useRef<HTMLInputElement | null>(null)
   const carColorRef = useRef<HTMLInputElement | null>(null)
   const carMakeRef = useRef<HTMLInputElement | null>(null)
@@ -253,12 +251,13 @@ export default function CreateDriverForm({
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
   const enterNext = useEnterToNext([
+    handleRef, // ✅ handle first
     displayNameRef,
     carColorRef,
     carMakeRef,
     carModelRef,
     stateRef,
-    // city is special (dropdown + decision gate) so we don't include it here
+    // city is special (dropdown + decision gate)
     starsRef,
     commentRef,
     submitRef,
@@ -509,13 +508,10 @@ export default function CreateDriverForm({
     [resetCity, error]
   )
 
-  // commitState focuses city but does NOT auto-open dropdown
   const commitState = useCallback(
     (code: string) => {
       pickState(code)
-      setTimeout(() => {
-        cityInputRef.current?.focus()
-      }, 0)
+      setTimeout(() => cityInputRef.current?.focus(), 0)
     },
     [pickState]
   )
@@ -949,7 +945,6 @@ export default function CreateDriverForm({
         return
       }
 
-      // safely read new review id
       const reviewObj = isJsonObject(json.review) ? json.review : null
       const newReviewId = typeof reviewObj?.id === 'string' ? reviewObj.id : undefined
       if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
@@ -971,7 +966,6 @@ export default function CreateDriverForm({
     'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
 
   const cityDropdownClass = 'mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
-
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const stateItemClass = (active: boolean) =>
@@ -1004,12 +998,27 @@ export default function CreateDriverForm({
 
       {!handleValid && (
         <p className="text-sm text-red-600">
-          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a dash,
-          then 2–24 letters).
+          This driver handle format is invalid. It must look like <strong>8841-mike</strong> (1–4 letters/numbers, a dash, then 2–24
+          letters).
         </p>
       )}
 
       <div className="space-y-3">
+        {/* ✅ HANDLE INPUT (editable) */}
+        <input
+          ref={handleRef}
+          value={handleInput}
+          onChange={(e) => setHandleInput(e.target.value)}
+          onKeyDown={enterNext}
+          placeholder='Driver handle (ex: "8841-mike")'
+          className={inputClass}
+          disabled={loading}
+          inputMode="text"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+
         <input
           ref={displayNameRef}
           value={displayName}
@@ -1244,7 +1253,11 @@ export default function CreateDriverForm({
                       Enter anyway
                     </button>
 
-                    <button type="button" className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm" onClick={onCityPickFromList}>
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded-md border border-gray-300 bg-white text-sm"
+                      onClick={onCityPickFromList}
+                    >
                       Pick from list
                     </button>
 
@@ -1293,7 +1306,6 @@ export default function CreateDriverForm({
           <TagGroup title="Negative" list={grouped.negative ?? []} selectedTagIds={selectedTagIds} toggleTag={toggleTag} />
         </div>
 
-        {/* Comment box with counter */}
         <div className="space-y-2">
           <div className="relative">
             <textarea
