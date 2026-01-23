@@ -214,7 +214,15 @@ export default function SearchForm({
     else setState('')
   }, [])
 
-  const selectBestStateFromInput = useCallback(() => {
+  // ✅ FIX: allow selecting the highlighted item even when input is empty.
+  const selectBestStateFromCurrentUI = useCallback(() => {
+    // 1) If user has highlighted an option (via Tab-cycling or arrows), pick it first.
+    if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
+      pickState(stateMatches[stateActiveIndex].code)
+      return true
+    }
+
+    // 2) Otherwise fall back to typed input.
     const raw = stateInput.trim()
     if (!raw) return false
 
@@ -232,11 +240,6 @@ export default function SearchForm({
       return true
     }
 
-    if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
-      pickState(stateMatches[stateActiveIndex].code)
-      return true
-    }
-
     const best = stateMatches[0]
     if (best) {
       pickState(best.code)
@@ -244,12 +247,8 @@ export default function SearchForm({
     }
 
     return false
-  }, [stateInput, stateActiveIndex, stateMatches, pickState])
+  }, [stateActiveIndex, stateMatches, stateInput, pickState])
 
-  // ✅ same update as CreateDriverForm:
-  // - Tab/Shift+Tab cycles highlight ONLY while dropdown is open (does not select)
-  // - Enter selects highlighted/best match
-  // - Esc closes dropdown (then Tab proceeds normally to next field)
   const onStateKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       const anyResults = stateMatches.length > 0
@@ -274,7 +273,6 @@ export default function SearchForm({
           setStateActiveIndex(-1)
           return
         }
-
         if (!anyResults) return
 
         setStateActiveIndex((prev) => {
@@ -287,10 +285,10 @@ export default function SearchForm({
         return
       }
 
+      // ✅ Tab cycles highlight while open (does not select)
       if (e.key === 'Tab' && stateOpen) {
         e.preventDefault()
         e.stopPropagation()
-
         if (!anyResults) return
 
         setStateActiveIndex((prev) => {
@@ -302,16 +300,25 @@ export default function SearchForm({
         return
       }
 
+      // ✅ Enter selects highlighted/best
       if (e.key === 'Enter') {
-        const didSelect = selectBestStateFromInput()
+        const didSelect = selectBestStateFromCurrentUI()
+
+        // if nothing to select, just move on (optional behavior)
+        if (!didSelect && !stateInput.trim()) {
+          e.preventDefault()
+          e.stopPropagation()
+          makeRef.current?.focus()
+          return
+        }
+
         if (didSelect) {
           e.preventDefault()
           e.stopPropagation()
         }
-        return
       }
     },
-    [stateMatches, stateOpen, scrollActiveStateIntoView, selectBestStateFromInput]
+    [stateMatches, stateOpen, scrollActiveStateIntoView, selectBestStateFromCurrentUI, stateInput]
   )
 
   /* -------------------- close dropdown on outside click -------------------- */
@@ -425,15 +432,12 @@ export default function SearchForm({
           router.push(buildSearchUrl())
         }}
         onKeyDown={(e) => {
-          // prevent Enter from submitting while navigating inputs,
-          // but DO NOT block Enter on the submit button
+          // prevent Enter from submitting while navigating inputs
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
           if (!el) return
           if (el instanceof HTMLTextAreaElement) return
-          if (el instanceof HTMLButtonElement && el.getAttribute('type') === 'submit') return
-          // also allow Enter on dropdown option buttons
-          if (el instanceof HTMLButtonElement) return
+          if (el instanceof HTMLButtonElement) return // allow buttons (dropdown options + submit)
           e.preventDefault()
         }}
       >
@@ -466,7 +470,6 @@ export default function SearchForm({
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* State */}
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -494,7 +497,7 @@ export default function SearchForm({
                     <button
                       key={s.code}
                       type="button"
-                      tabIndex={-1} // ✅ keep Tab on the input; we cycle in onStateKeyDown
+                      tabIndex={-1} // keep Tab cycling controlled by onStateKeyDown
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -518,16 +521,8 @@ export default function SearchForm({
                 </div>
               </div>
             )}
-
-            {stateOpen && (
-              <div className="mt-1 text-[11px] text-gray-500">
-                Tip: <span className="font-semibold">Tab</span> cycles states • <span className="font-semibold">Enter</span> selects •{' '}
-                <span className="font-semibold">Esc</span> closes
-              </div>
-            )}
           </div>
 
-          {/* Car make */}
           <input
             ref={makeRef}
             value={carMake}

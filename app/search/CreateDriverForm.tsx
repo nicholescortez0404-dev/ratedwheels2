@@ -280,10 +280,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   const [handleInput, setHandleInput] = useState(() => formatHandleDisplayInput(initialRaw))
   const handle = useMemo(() => normalizeToHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
-  const displayLabel = useMemo(
-    () => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''),
-    [handle, initialRaw]
-  )
+  const displayLabel = useMemo(() => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''), [handle, initialRaw])
 
   /* -------------------- fields -------------------- */
   const [carMake, setCarMake] = useState(initialCarMake ?? '')
@@ -339,7 +336,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       const target = e.target as Element | null
       if (!target) return
       if (target instanceof HTMLTextAreaElement) return
-      // allow Enter to activate buttons naturally
       if (target instanceof HTMLButtonElement) return
       e.preventDefault()
       e.stopPropagation()
@@ -364,9 +360,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     if (Math.abs(e.clientY - touchStartYRef.current) > 8) touchMovedRef.current = true
   }, [])
 
-  const isTouchTap = useCallback((e: React.PointerEvent) => {
-    return e.pointerType === 'touch' && !touchMovedRef.current
-  }, [])
+  const isTouchTap = useCallback((e: React.PointerEvent) => e.pointerType === 'touch' && !touchMovedRef.current, [])
 
   const scrollActiveStateIntoView = useCallback((nextIdx: number) => {
     if (!stateListRef.current) return
@@ -451,7 +445,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
       if (error) setError(null)
 
-      // after selection, move to next field
       setTimeout(() => carMakeRef.current?.focus(), 0)
     },
     [error]
@@ -468,7 +461,18 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     else setState('')
   }, [])
 
-  const selectBestStateFromInput = useCallback(() => {
+  // ✅ FIX: Enter should select highlighted item even if input is empty.
+  // Priority:
+  // 1) highlighted option (stateActiveIndex)
+  // 2) exact typed code
+  // 3) exact typed name
+  // 4) first match
+  const selectBestStateFromCurrentUI = useCallback(() => {
+    if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
+      pickState(stateMatches[stateActiveIndex].code)
+      return true
+    }
+
     const raw = stateInput.trim()
     if (!raw) return false
 
@@ -486,11 +490,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       return true
     }
 
-    if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
-      pickState(stateMatches[stateActiveIndex].code)
-      return true
-    }
-
     const best = stateMatches[0]
     if (best) {
       pickState(best.code)
@@ -498,12 +497,13 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     }
 
     return false
-  }, [stateInput, stateActiveIndex, stateMatches, pickState])
+  }, [stateActiveIndex, stateMatches, stateInput, pickState])
 
-  // ✅ Your requested behavior:
-  // - Tab/Shift+Tab cycles highlighted states (ONLY when dropdown is open)
-  // - Enter selects highlighted/best match (Tab does NOT commit)
-  // - Escape closes dropdown (then Tab moves to next field normally)
+  // ✅ Desired UX:
+  // - Required state: Tab should NOT leave to car make until selected.
+  // - When dropdown open: Tab/Shift+Tab cycles highlight (does NOT select).
+  // - Enter selects (even if input is empty, selects highlighted).
+  // - Escape closes dropdown; if not picked, Tab re-opens/cycles instead of leaving.
   const onStateKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (loading) return
@@ -521,7 +521,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         return
       }
 
-      // Arrow navigation
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
@@ -531,39 +530,45 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
           setStateActiveIndex(-1)
           return
         }
-
         if (!anyResults) return
 
         setStateActiveIndex((prev) => {
-          let next = prev
-          if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : 0
-          else next = prev <= 0 ? maxIdx : prev - 1
+          const next = e.key === 'ArrowDown' ? (prev < maxIdx ? prev + 1 : 0) : prev <= 0 ? maxIdx : prev - 1
           setTimeout(() => scrollActiveStateIntoView(next), 0)
           return next
         })
         return
       }
 
-      // ✅ Tab cycles highlight when dropdown is open (does NOT select)
-      if (e.key === 'Tab' && stateOpen) {
-        e.preventDefault()
-        e.stopPropagation()
+      // Tab behavior:
+      // - If dropdown open: cycle highlight
+      // - If dropdown closed AND not picked: open dropdown and start cycling (do NOT leave field)
+      if (e.key === 'Tab') {
+        if (stateOpen || !statePicked) {
+          e.preventDefault()
+          e.stopPropagation()
 
-        if (!anyResults) return
+          if (!stateOpen) setStateOpen(true)
+          if (!anyResults) return
 
-        setStateActiveIndex((prev) => {
-          // If nothing active, start at 0 (or end for Shift+Tab)
-          const start = prev < 0 ? (e.shiftKey ? maxIdx : 0) : prev
-          const next = e.shiftKey ? (start <= 0 ? maxIdx : start - 1) : (start >= maxIdx ? 0 : start + 1)
-          setTimeout(() => scrollActiveStateIntoView(next), 0)
-          return next
-        })
+          setStateActiveIndex((prev) => {
+            // Start: if nothing active, begin at 0 (or end for Shift+Tab)
+            const start = prev < 0 ? (e.shiftKey ? maxIdx : 0) : prev
+            const next = e.shiftKey ? (start <= 0 ? maxIdx : start - 1) : start >= maxIdx ? 0 : start + 1
+            setTimeout(() => scrollActiveStateIntoView(next), 0)
+            return next
+          })
+          return
+        }
+
+        // picked + dropdown closed => allow normal Tab to car make
+        setStateOpen(false)
+        setStateActiveIndex(-1)
         return
       }
 
-      // Enter selects
       if (e.key === 'Enter') {
-        const didSelect = selectBestStateFromInput()
+        const didSelect = selectBestStateFromCurrentUI()
         if (didSelect) {
           e.preventDefault()
           e.stopPropagation()
@@ -571,7 +576,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         return
       }
     },
-    [loading, stateMatches, stateOpen, scrollActiveStateIntoView, selectBestStateFromInput]
+    [loading, stateMatches, stateOpen, statePicked, scrollActiveStateIntoView, selectBestStateFromCurrentUI]
   )
 
   /* -------------------- create driver -------------------- */
@@ -611,7 +616,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     throw new Error(insertErr.message)
   }
 
-  const onCreateOnly = useCallback(async () => {
+  async function onCreateOnly() {
     if (loading) return
     setLoading(true)
     setError(null)
@@ -626,57 +631,54 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     } finally {
       setLoading(false)
     }
-  }, [loading, router, handle]) // createDriver uses state in closure; ok here since user action triggers
+  }
 
-  const onCreateAndReview = useCallback(
-    async (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault()
-      if (loading) return
+  async function onCreateAndReview(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (loading) return
 
-      if (overLimit) {
-        setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
+    if (overLimit) {
+      setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    const tagIds = Array.from(selectedTagIds)
+
+    try {
+      const row = await createDriver()
+      const nextHandle = row?.driver_handle ?? handle
+
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId: row.id, stars, comment, tagIds }),
+      })
+
+      const jsonUnknown: unknown = await res.json().catch(() => ({}))
+      const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
+
+      if (!res.ok) {
+        const apiErr = typeof json.error === 'string' ? json.error : 'Driver created, but review failed to post.'
+        setError(apiErr)
+        setLoading(false)
         return
       }
 
-      setLoading(true)
-      setError(null)
+      const reviewObj = isJsonObject(json.review) ? json.review : null
+      const newReviewId = typeof (reviewObj as any)?.id === 'string' ? ((reviewObj as any).id as string) : undefined
+      if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
 
-      const tagIds = Array.from(selectedTagIds)
-
-      try {
-        const row = await createDriver()
-        const nextHandle = row?.driver_handle ?? handle
-
-        const res = await fetch('/api/reviews', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ driverId: row.id, stars, comment, tagIds }),
-        })
-
-        const jsonUnknown: unknown = await res.json().catch(() => ({}))
-        const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
-
-        if (!res.ok) {
-          const apiErr = typeof json.error === 'string' ? json.error : 'Driver created, but review failed to post.'
-          setError(apiErr)
-          setLoading(false)
-          return
-        }
-
-        const reviewObj = isJsonObject(json.review) ? json.review : null
-        const newReviewId = typeof (reviewObj as any)?.id === 'string' ? ((reviewObj as any).id as string) : undefined
-        if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
-
-        router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
-        router.refresh()
-      } catch (err: unknown) {
-        setError(errorMessage(err, 'Failed to create driver and post review.'))
-      } finally {
-        setLoading(false)
-      }
-    },
-    [loading, overLimit, selectedTagIds, handle, stars, comment, router]
-  )
+      router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
+      router.refresh()
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to create driver and post review.'))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   /* -------------------- styles -------------------- */
 
@@ -703,7 +705,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         if (!el) return
         if (el instanceof HTMLTextAreaElement) return
         if (el instanceof HTMLButtonElement) return
-        // state input handles Enter itself; other inputs use onEnterToNext
         e.preventDefault()
       }}
     >
@@ -724,7 +725,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       )}
 
       <div className="space-y-3">
-        {/* handle */}
         <input
           ref={handleRef}
           value={handleInput}
@@ -744,7 +744,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         />
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* state (required) */}
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -773,7 +772,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                     <button
                       key={s.code}
                       type="button"
-                      tabIndex={-1} // ✅ Tab stays on input; we handle cycling in onStateKeyDown
+                      tabIndex={-1} // Tab stays on the input; we handle cycling there
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -799,15 +798,15 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
             )}
 
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
+
             {stateOpen && (
               <div className="mt-1 text-[11px] text-gray-500">
-                Tip: <span className="font-semibold">Tab</span> cycles states • <span className="font-semibold">Enter</span> selects •{' '}
+                Tip: <span className="font-semibold">Tab</span> cycles • <span className="font-semibold">Enter</span> selects •{' '}
                 <span className="font-semibold">Esc</span> closes
               </div>
             )}
           </div>
 
-          {/* car make (optional) */}
           <input
             ref={carMakeRef}
             value={carMake}
@@ -822,7 +821,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         </div>
       </div>
 
-      {/* review fields */}
       <div className="space-y-4 pt-2">
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
