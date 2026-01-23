@@ -61,6 +61,7 @@ function normalizeQuery(raw: string) {
   return raw
     .trim()
     .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ')
     .replace(/[_\s]+/g, '-')
     .replace(/-+/g, '-')
 }
@@ -92,6 +93,20 @@ function buildContainsIlike(v: string) {
   return `%${escapeIlikeLiteral(v.trim())}%`
 }
 
+/* -------------------- UI helpers -------------------- */
+
+function DriverMeta({ state, carMake }: { state: string | null; carMake: string | null }) {
+  const st = (state ?? '').trim()
+  const mk = (carMake ?? '').trim()
+
+  return (
+    <div className="mt-1 text-sm text-gray-700 space-y-1">
+      <div>{st ? `State: ${st}` : 'State: —'}</div>
+      <div>{mk ? `Car make: ${mk}` : 'Car make: —'}</div>
+    </div>
+  )
+}
+
 /* -------------------- page -------------------- */
 
 export default async function SearchPage({
@@ -114,7 +129,7 @@ export default async function SearchPage({
   // normalized query used for DB matching
   const q = normalizeQuery(rawQ)
 
-  // optional filters (only the ones we still support)
+  // optional filters
   const initialState = String(sp.state ?? '').trim().toUpperCase()
   const initialCarMake = String(sp.car_make ?? '').trim()
 
@@ -160,13 +175,6 @@ export default async function SearchPage({
   const plateParsed = q ? parsePlateLeading(q) : null
   const isExactHandle = q ? HANDLE_RE.test(q) : false
   const isPlateLeading = Boolean(plateParsed)
-
-  // ---- Search rules:
-  // 1) "mike" (no plate) => no results + guidance (no create prompt)
-  // 2) "2222" (plate only) => do NOT dump; require a disambiguator OR name letter
-  // 3) "2222 t" => normalized to "2222-t" => prefix match driver_handle ILIKE "2222-t%"
-  // 4) exact handle always checks exact first
-  // 5) cap suggestions to 20-25
 
   if (q) {
     // ------------- EXACT LOOKUP -------------
@@ -319,7 +327,6 @@ export default async function SearchPage({
 
         {!q && <p className="mt-6 text-sm text-gray-600">Type a handle to search.</p>}
 
-        {/* Server-side helper (mirrors SearchForm gating rules) */}
         {helperMessage && (
           <div className="mt-6 w-full max-w-xl rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-900">
             {helperMessage}
@@ -335,12 +342,7 @@ export default async function SearchPage({
             <div className="flex items-start justify-between gap-6">
               <div>
                 <div className="text-xl font-semibold">{driver.display_name ?? driver.driver_handle}</div>
-
-                {/* Minimal line: State + Car make */}
-                <div className="mt-1 text-sm text-gray-700">
-                  {driver.state ? `State: ${driver.state}` : 'State: —'}
-                  {driver.car_make ? ` • Car make: ${driver.car_make}` : ''}
-                </div>
+                <DriverMeta state={driver.state} carMake={driver.car_make} />
               </div>
 
               <div className="text-right">
@@ -382,11 +384,7 @@ export default async function SearchPage({
                       <div
                         className={[
                           'h-2 rounded',
-                          key === 'positive'
-                            ? 'bg-green-500'
-                            : key === 'neutral'
-                            ? 'bg-yellow-500'
-                            : 'bg-red-500',
+                          key === 'positive' ? 'bg-green-500' : key === 'neutral' ? 'bg-yellow-500' : 'bg-red-500',
                         ].join(' ')}
                         style={{ width: `${pct}%` }}
                       />
@@ -437,16 +435,10 @@ export default async function SearchPage({
                     .filter((t): t is TagRow => Boolean(t))
 
                   return (
-                    <li
-                      key={r.id}
-                      id={`review-${r.id}`}
-                      className="rounded-2xl border border-gray-300 bg-transparent p-5"
-                    >
+                    <li key={r.id} id={`review-${r.id}`} className="rounded-2xl border border-gray-300 bg-transparent p-5">
                       <div className="flex items-center justify-between gap-4">
                         <div className="text-sm font-semibold">Rating: {r.stars}/5</div>
-                        <div className="text-xs text-gray-600">
-                          {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
-                        </div>
+                        <div className="text-xs text-gray-600">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</div>
                       </div>
 
                       {r.comment ? (
@@ -458,10 +450,7 @@ export default async function SearchPage({
                       {tagList.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {tagList.map((t) => (
-                            <span
-                              key={t.id}
-                              className="rounded-full border border-gray-300 bg-white/50 px-3 py-1 text-xs text-gray-900"
-                            >
+                            <span key={t.id} className="rounded-full border border-gray-300 bg-white/50 px-3 py-1 text-xs text-gray-900">
                               {t.label}
                             </span>
                           ))}
@@ -492,12 +481,7 @@ export default async function SearchPage({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-base font-semibold">{d.display_name ?? d.driver_handle}</div>
-
-                      {/* Minimal line: State + Car make */}
-                      <div className="mt-1 text-sm text-gray-700">
-                        {d.state ? `State: ${d.state}` : 'State: —'}
-                        {d.car_make ? ` • Car make: ${d.car_make}` : ''}
-                      </div>
+                      <DriverMeta state={d.state} carMake={d.car_make} />
                     </div>
 
                     <div className="text-sm text-gray-600">Open</div>

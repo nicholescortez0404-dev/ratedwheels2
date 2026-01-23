@@ -125,14 +125,6 @@ function errorMessage(e: unknown, fallback: string) {
   return e instanceof Error ? e.message : fallback
 }
 
-function normalizeHandle(raw: string) {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[_\s]+/g, '-')
-    .replace(/-+/g, '-')
-}
-
 function titleCaseName(s: string) {
   return s
     .trim()
@@ -148,6 +140,49 @@ function displayNameFromHandle(normalizedHandle: string) {
   const plate = m[1]
   const name = titleCaseName(m[2])
   return `${name} (${plate})`
+}
+
+/**
+ * What the user *sees* while typing:
+ * - ensure "2222tommy" becomes "2222 tommy"
+ * - ensure "2222-tommy" / "2222_tommy" becomes "2222 tommy"
+ * - auto-space after 4 digits when the 5th char is a letter
+ */
+function formatHandleDisplayInput(nextRaw: string) {
+  let v = nextRaw.replace(/\s+/g, ' ')
+  v = v.replace(/^(\d{4})([A-Za-z])/, '$1 $2')
+  v = v.replace(/^(\d{4})[-_]+/, '$1 ')
+  return v
+}
+
+/**
+ * Normalize anything into canonical DB handle:
+ * - lowercase
+ * - remove punctuation
+ * - spaces/underscores -> dash
+ * - supports:
+ *    "2222 tommy" -> "2222-tommy"
+ *    "tommy 2222" -> "2222-tommy"
+ *    "2222tommy"  -> "2222-tommy"
+ *    "2222-tommy" -> "2222-tommy"
+ */
+function normalizeToHandle(raw: string) {
+  const s = raw.trim().toLowerCase()
+  if (!s) return ''
+
+  const cleaned = s.replace(/[^a-z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (HANDLE_RE.test(cleaned)) return cleaned
+
+  let m = cleaned.match(/^(\d{1,4})[\s_-]+([a-z]{2,24})$/)
+  if (m) return `${m[1]}-${m[2]}`
+
+  m = cleaned.match(/^([a-z]{2,24})[\s_-]+(\d{1,4})$/)
+  if (m) return `${m[2]}-${m[1]}`
+
+  m = cleaned.match(/^(\d{1,4})([a-z]{2,24})$/)
+  if (m) return `${m[1]}-${m[2]}`
+
+  return cleaned.replace(/[_\s]+/g, '-').replace(/-+/g, '-')
 }
 
 function bestStateMatches(qRaw: string, limit = 60) {
@@ -240,11 +275,15 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
   /* -------------------- handle (editable) -------------------- */
   const handleRef = useRef<HTMLInputElement | null>(null)
-  const [handleInput, setHandleInput] = useState(initialRaw)
+  const [handleInput, setHandleInput] = useState(() => formatHandleDisplayInput(initialRaw))
 
-  const handle = useMemo(() => normalizeHandle(handleInput), [handleInput])
+  // canonical handle used for DB + URLs
+  const handle = useMemo(() => normalizeToHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
-  const displayLabel = useMemo(() => displayNameFromHandle(handle), [handle])
+  const displayLabel = useMemo(
+    () => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''),
+    [handle, initialRaw]
+  )
 
   /* -------------------- refs for enter-to-next -------------------- */
   const carMakeRef = useRef<HTMLInputElement | null>(null)
@@ -417,6 +456,8 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     }
   }
 
+  // ✅ FIX: Tab should not push focus into the dropdown options.
+  // We intercept Tab like Enter to "pick" the best match.
   function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (loading) return
 
@@ -452,6 +493,11 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
     if (e.key === 'Enter' || e.key === 'Tab') {
       const raw = stateInput.trim()
+
+      // If dropdown is open OR they typed something, Tab should "pick" instead of moving focus.
+      const shouldInterceptTab = e.key === 'Tab' && (stateOpen || raw.length > 0)
+      if (shouldInterceptTab) e.preventDefault()
+
       if (!raw) return
 
       const upper = raw.toUpperCase()
@@ -488,15 +534,18 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
   async function createDriver(): Promise<InsertedDriver> {
     if (!statePicked) throw new Error('Please select a state.')
-    if (!handleValid) {
+
+    const normalizedHandle = handle
+
+    if (!HANDLE_RE.test(normalizedHandle)) {
       throw new Error('Driver handle format is invalid. Use: last 4 digits + first name (example: 8841-mike).')
     }
 
     const { data: inserted, error: insertErr } = await supabase
       .from('drivers')
       .insert({
-        driver_handle: handle,
-        display_name: displayNameFromHandle(handle),
+        driver_handle: normalizedHandle,
+        display_name: displayNameFromHandle(normalizedHandle),
         state,
         car_make: carMake.trim() || null,
       })
@@ -505,13 +554,12 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
     if (!insertErr) return inserted as InsertedDriver
 
-    // ✅ If driver already exists, route to the existing driver instead of failing
     const msg = String(insertErr.message || '').toLowerCase()
     if (msg.includes('duplicate') || msg.includes('unique')) {
       const { data: existing } = await supabase
         .from('drivers')
         .select('id, driver_handle')
-        .eq('driver_handle', handle)
+        .eq('driver_handle', normalizedHandle)
         .maybeSingle()
 
       if (existing?.id) return existing as InsertedDriver
@@ -591,9 +639,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500 ' +
     'focus:outline-none focus:ring-2 focus:ring-black/20'
 
-  const dropdownClass =
-    'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
-
+  const dropdownClass = 'absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg'
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const itemClass = (active: boolean) =>
@@ -617,8 +663,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       }}
     >
       <p className="text-gray-900">
-        We couldn’t find this driver yet. Be the first to create and review{' '}
-        <span className="font-semibold">{displayLabel}</span>.
+        We couldn’t find this driver yet. Be the first to create and review <span className="font-semibold">{displayLabel}</span>.
       </p>
 
       <div className="text-xs text-gray-600">
@@ -638,9 +683,15 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         <input
           ref={handleRef}
           value={handleInput}
-          onChange={(e) => setHandleInput(e.target.value)}
+          onChange={(e) => {
+            setHandleInput(formatHandleDisplayInput(e.target.value))
+            if (error) setError(null)
+          }}
+          onBlur={() => {
+            setHandleInput((prev) => formatHandleDisplayInput(prev.trim()))
+          }}
           onKeyDown={enterNext}
-          placeholder='Driver handle (ex: "8841-mike")'
+          placeholder='Last 4 + first name (ex: "8841 mike")'
           className={inputClass}
           disabled={loading}
           inputMode="text"
@@ -680,9 +731,18 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                     <button
                       key={s.code}
                       type="button"
+                      tabIndex={-1} // ✅ FIX: keep dropdown options out of tab order
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
+                      onKeyDown={(e) => {
+                        // ✅ FIX: if focus somehow lands here, Enter/Space should still select
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          pickState(s.code)
+                        }
+                      }}
                       onPointerDown={optionPointerDown}
                       onPointerMove={optionPointerMove}
                       onPointerUp={(e) => {
@@ -792,8 +852,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
 
           {overLimit && (
             <p className="text-sm text-red-600">
-              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to
-              continue.
+              Your comment is too long. Please shorten it to <strong>{MAX_COMMENT_CHARS} characters or less</strong> to continue.
             </p>
           )}
 

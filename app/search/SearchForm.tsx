@@ -60,22 +60,43 @@ const STATES: { code: string; name: string }[] = [
 
 // DB constraint: ^[a-z0-9]{1,4}-[a-z]{2,24}$
 const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
+const PLATE_LEADING_RE = /^(\d{4})(?:-([a-z]{1,24}))?$/
 
-function normalizeQuery(raw: string) {
+/**
+ * Normalize ANY user-typed query into the canonical handle-ish string
+ * used for matching + URLs (lowercase, spaces/underscores -> dash).
+ *
+ * IMPORTANT: UI shows "2222 tommy" but DB/search uses "2222-tommy".
+ */
+function normalizeQueryToHandle(raw: string) {
   return raw
     .trim()
     .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ') // strip weird punctuation
     .replace(/[_\s]+/g, '-') // spaces/underscores -> dash
     .replace(/-+/g, '-') // collapse repeated dashes
 }
 
+/**
+ * Make the input feel natural:
+ * - auto-insert a SPACE after 4 digits when user starts typing a name
+ * - fix pasted "2222tommy" into "2222 tommy"
+ * - show a space (not dash) after 4 digits
+ */
+function formatQueryInputDisplay(nextRaw: string) {
+  let v = nextRaw.replace(/\s+/g, ' ')
+
+  // "2222Tommy" => "2222 Tommy"
+  v = v.replace(/^(\d{4})([A-Za-z])/, '$1 $2')
+
+  // "2222-tommy" / "2222_tommy" => "2222 tommy"
+  v = v.replace(/^(\d{4})[-_]+/, '$1 ')
+
+  return v
+}
+
 function parsePlateLeading(norm: string) {
-  // Accept:
-  //  - "2222"
-  //  - "2222-t"
-  //  - "2222-te"
-  //  - "2222-test"
-  const m = norm.match(/^(\d{4})(?:-([a-z]{1,24}))?$/)
+  const m = norm.match(PLATE_LEADING_RE)
   if (!m) return null
   return { plate: m[1], namePrefix: (m[2] ?? '').trim() }
 }
@@ -135,14 +156,14 @@ export default function SearchForm({
   const enterNext = useEnterToNext([qRef, stateRef, makeRef, submitRef])
 
   /* -------------------- form state -------------------- */
-  const [qInput, setQInput] = useState(initialQuery)
+  const [qInput, setQInput] = useState(() => formatQueryInputDisplay(initialQuery))
   const [carMake, setCarMake] = useState(initialCarMake)
 
   /* -------------------- helper + shake -------------------- */
   const [helper, setHelper] = useState<string | null>(null)
   const [shakeKey, setShakeKey] = useState(0)
 
-  const normQ = useMemo(() => normalizeQuery(qInput), [qInput])
+  const normQ = useMemo(() => normalizeQueryToHandle(qInput), [qInput])
   const isExactHandle = useMemo(() => HANDLE_RE.test(normQ), [normQ])
   const plateParsed = useMemo(() => parsePlateLeading(normQ), [normQ])
 
@@ -197,6 +218,7 @@ export default function SearchForm({
     setStateOpen(false)
     setStateActiveIndex(-1)
 
+    // after selecting state, move on
     setTimeout(() => makeRef.current?.focus(), 0)
   }, [])
 
@@ -214,6 +236,13 @@ export default function SearchForm({
     }
   }
 
+  /**
+   * Key behavior:
+   * - Arrow keys: navigate
+   * - Enter: select (active option / exact code / best match)
+   * - Tab: if dropdown open (or text present), treat like select-best and move on
+   *        (prevents the "Tab then Enter doesn't work" confusion)
+   */
   function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     const anyResults = stateMatches.length > 0
     const maxIdx = anyResults ? stateMatches.length - 1 : -1
@@ -245,15 +274,22 @@ export default function SearchForm({
       return
     }
 
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' || e.key === 'Tab') {
       const raw = stateInput.trim()
+
+      // If Tab + empty input + dropdown closed, allow normal tabbing
+      if (e.key === 'Tab' && !raw && !stateOpen) return
+
+      // If empty and Enter, just go next
       if (!raw) {
+        if (e.key === 'Tab') return
         e.preventDefault()
         makeRef.current?.focus()
         return
       }
 
       const upper = raw.toUpperCase()
+
       const exactCode = STATES.find((s) => s.code === upper)
       if (exactCode) {
         e.preventDefault()
@@ -261,17 +297,23 @@ export default function SearchForm({
         return
       }
 
+      // If there's an active highlighted item, pick it
       if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
         e.preventDefault()
         pickState(stateMatches[stateActiveIndex].code)
         return
       }
 
+      // Otherwise pick the best match (first)
       const best = stateMatches[0]
       if (best) {
         e.preventDefault()
         pickState(best.code)
+        return
       }
+
+      // Nothing matched; let Tab behave normally
+      if (e.key === 'Tab') return
     }
   }
 
@@ -314,14 +356,14 @@ export default function SearchForm({
       }
 
       if (q.endsWith('-')) {
-        triggerHelper('Add at least one letter of the first name after the dash (example: 2222-t).')
+        triggerHelper('Add at least one letter of the first name after the plate (example: 2222 t).')
         return false
       }
 
       return true
     }
 
-    triggerHelper('That doesn’t look like a handle. Use: last 4 + first name (example: 8841-mike).')
+    triggerHelper('That doesn’t look like a handle. Use: last 4 of license + first name (example: 8841-mike).')
     return false
   }
 
@@ -389,6 +431,7 @@ export default function SearchForm({
           router.push(buildSearchUrl())
         }}
         onKeyDown={(e) => {
+          // prevent "Enter" from submitting form while you’re navigating inputs
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
           if (el instanceof HTMLTextAreaElement) return
@@ -402,11 +445,15 @@ export default function SearchForm({
             ref={qRef}
             value={qInput}
             onChange={(e) => {
-              setQInput(e.target.value)
+              const next = formatQueryInputDisplay(e.target.value)
+              setQInput(next)
               if (helper) setHelper(null)
             }}
+            onBlur={() => {
+              setQInput((prev) => formatQueryInputDisplay(prev.trim()))
+            }}
             onKeyDown={enterNext}
-            placeholder="Last 4 of license plate + First name (ex: 8841-mike)"
+            placeholder="Last 4 of license plate + First name (ex: 8841 mike)"
             className="w-full rounded-md border border-gray-900 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
             autoCapitalize="none"
             autoCorrect="off"
@@ -448,7 +495,12 @@ export default function SearchForm({
                   ref={stateListRef}
                   className={dropdownScrollClass}
                   style={{ touchAction: 'pan-y' }}
-                  onPointerDown={optionPointerDown}
+                  onPointerDown={useCallback((e: React.PointerEvent) => {
+                    if (e.pointerType === 'touch') {
+                      touchStartYRef.current = e.clientY
+                      touchMovedRef.current = false
+                    }
+                  }, [])}
                   onPointerMove={optionPointerMove}
                 >
                   {stateMatches.map((s, idx) => (

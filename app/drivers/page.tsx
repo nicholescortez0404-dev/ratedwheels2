@@ -34,13 +34,24 @@ function safeUpper2(v: string | null | undefined) {
   return s && s.length === 2 ? s : s
 }
 
+function DriverMeta({ state, carMake }: { state: string | null; carMake: string | null }) {
+  const st = safeUpper2(state)
+  const mk = String(carMake ?? '').trim()
+
+  return (
+    <div className="mt-1 text-sm text-gray-700 space-y-1">
+      <div>{st ? `State: ${st}` : 'State: —'}</div>
+      <div>{mk ? `Car make: ${mk}` : 'Car make: —'}</div>
+    </div>
+  )
+}
+
 /* -------------------- page -------------------- */
 
 export default async function DriversPage() {
   noStore()
   const supabase = createSupabaseServerClient()
 
-  // 1) Load drivers (newest first) — only the fields we still use
   const { data: driversData, error: driversErr } = await supabase
     .from('drivers')
     .select('id,display_name,driver_handle,state,car_make,created_at')
@@ -65,7 +76,6 @@ export default async function DriversPage() {
 
   const drivers = (driversData ?? []) as Driver[]
 
-  // 2) Load stats only for these drivers
   let statsByDriver = new Map<string, DriverStat>()
 
   if (drivers.length > 0) {
@@ -117,9 +127,6 @@ export default async function DriversPage() {
               const avg = s?.avg_stars ?? null
               const count = s?.review_count ?? 0
 
-              const stateLabel = safeUpper2(d.state)
-              const makeLabel = String(d.car_make ?? '').trim()
-
               return (
                 <Link
                   key={d.id}
@@ -129,12 +136,7 @@ export default async function DriversPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="text-xl font-semibold">{d.display_name ?? d.driver_handle}</div>
-
-                      {/* ✅ plain text line (no pills) */}
-                      <div className="mt-1 text-sm text-gray-700">
-                        {stateLabel ? <span>State: {stateLabel}</span> : <span>State: —</span>}
-                        {makeLabel ? <span className="ml-3">Car make: {makeLabel}</span> : <span className="ml-3">Car make: —</span>}
-                      </div>
+                      <DriverMeta state={d.state} carMake={d.car_make} />
                     </div>
 
                     <div className="text-right">
