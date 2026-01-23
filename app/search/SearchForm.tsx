@@ -209,18 +209,21 @@ export default function SearchForm({
     el?.scrollIntoView({ block: 'nearest' })
   }
 
-  const pickState = useCallback((code: string) => {
-    const up = code.toUpperCase().trim()
-    if (!STATES.some((s) => s.code === up)) return
+  const pickState = useCallback(
+    (code: string) => {
+      const up = code.toUpperCase().trim()
+      if (!STATES.some((s) => s.code === up)) return
 
-    setState(up)
-    setStateInput(up)
-    setStateOpen(false)
-    setStateActiveIndex(-1)
+      setState(up)
+      setStateInput(up)
+      setStateOpen(false)
+      setStateActiveIndex(-1)
 
-    // after selecting state, move on
-    setTimeout(() => makeRef.current?.focus(), 0)
-  }, [])
+      // after selecting state, move on
+      setTimeout(() => makeRef.current?.focus(), 0)
+    },
+    [makeRef]
+  )
 
   function onStateChange(v: string) {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
@@ -332,13 +335,13 @@ export default function SearchForm({
   }, [])
 
   /* -------------------- submit gating -------------------- */
-  function triggerHelper(message: string) {
+  const triggerHelper = useCallback((message: string) => {
     setHelper(message)
     setShakeKey((k) => k + 1)
     setTimeout(() => qRef.current?.focus(), 0)
-  }
+  }, [])
 
-  function canSubmit(): boolean {
+  const canSubmit = useCallback((): boolean => {
     const q = normQ
 
     if (!q) {
@@ -365,9 +368,9 @@ export default function SearchForm({
 
     triggerHelper('That doesn’t look like a handle. Use: last 4 of license + first name (example: 8841-mike).')
     return false
-  }
+  }, [normQ, isExactHandle, plateParsed, hasDisambiguatorsLive, triggerHelper])
 
-  function buildSearchUrl() {
+  const buildSearchUrl = useCallback(() => {
     const params = new URLSearchParams()
 
     const q = normQ
@@ -381,7 +384,7 @@ export default function SearchForm({
 
     const qs = params.toString()
     return qs ? `/search?${qs}` : '/search'
-  }
+  }, [normQ, state, carMake])
 
   /* -------------------- styles -------------------- */
   const inputClass =
@@ -392,7 +395,10 @@ export default function SearchForm({
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const itemClass = (active: boolean) =>
-    ['w-full text-left px-3 py-2 text-sm transition', active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100'].join(' ')
+    [
+      'w-full text-left px-3 py-2 text-sm transition',
+      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
+    ].join(' ')
 
   return (
     <>
@@ -468,9 +474,8 @@ export default function SearchForm({
         )}
 
         <p className="text-sm text-gray-700">
-          <span className="font-semibold">Recommended:</span> Searches are most precise with <span className="font-semibold">plate + name</span>.
-          If you only know the plate, add <span className="font-semibold">state</span> or <span className="font-semibold">car make</span> to narrow
-          results.
+          <span className="font-semibold">Recommended:</span> Searches are most precise with <span className="font-semibold">plate + name</span>. If you
+          only know the plate, add <span className="font-semibold">state</span> or <span className="font-semibold">car make</span> to narrow results.
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -495,12 +500,7 @@ export default function SearchForm({
                   ref={stateListRef}
                   className={dropdownScrollClass}
                   style={{ touchAction: 'pan-y' }}
-                  onPointerDown={useCallback((e: React.PointerEvent) => {
-                    if (e.pointerType === 'touch') {
-                      touchStartYRef.current = e.clientY
-                      touchMovedRef.current = false
-                    }
-                  }, [])}
+                  onPointerDown={optionPointerDown}
                   onPointerMove={optionPointerMove}
                 >
                   {stateMatches.map((s, idx) => (
