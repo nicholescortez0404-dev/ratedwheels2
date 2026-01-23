@@ -113,9 +113,7 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <span className="font-semibold underline underline-offset-2">
-        {text.slice(idx, idx + query.length)}
-      </span>
+      <span className="font-semibold underline underline-offset-2">{text.slice(idx, idx + query.length)}</span>
       {text.slice(idx + query.length)}
     </>
   )
@@ -190,18 +188,20 @@ export default function SearchForm({
     el?.scrollIntoView({ block: 'nearest' })
   }, [])
 
-  const pickState = useCallback((code: string) => {
-    const up = code.toUpperCase().trim()
-    if (!STATES.some((s) => s.code === up)) return
+  const pickState = useCallback(
+    (code: string) => {
+      const up = code.toUpperCase().trim()
+      if (!STATES.some((s) => s.code === up)) return
 
-    setState(up)
-    setStateInput(up)
-    setStateOpen(false)
-    setStateActiveIndex(-1)
+      setState(up)
+      setStateInput(up)
+      setStateOpen(false)
+      setStateActiveIndex(-1)
 
-    // move on
-    setTimeout(() => makeRef.current?.focus(), 0)
-  }, [])
+      setTimeout(() => makeRef.current?.focus(), 0)
+    },
+    [makeRef]
+  )
 
   const onStateChange = useCallback((v: string) => {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
@@ -214,6 +214,42 @@ export default function SearchForm({
     else setState('')
   }, [])
 
+  const selectBestStateFromInput = useCallback(() => {
+    const raw = stateInput.trim()
+    if (!raw) return false
+
+    const upper = raw.toUpperCase()
+
+    const exactCode = STATES.find((s) => s.code === upper)
+    if (exactCode) {
+      pickState(exactCode.code)
+      return true
+    }
+
+    const exactName = STATES.find((s) => s.name.toUpperCase() === upper)
+    if (exactName) {
+      pickState(exactName.code)
+      return true
+    }
+
+    if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
+      pickState(stateMatches[stateActiveIndex].code)
+      return true
+    }
+
+    const best = stateMatches[0]
+    if (best) {
+      pickState(best.code)
+      return true
+    }
+
+    return false
+  }, [stateInput, stateActiveIndex, stateMatches, pickState])
+
+  // ✅ same update as CreateDriverForm:
+  // - Tab/Shift+Tab cycles highlight ONLY while dropdown is open (does not select)
+  // - Enter selects highlighted/best match
+  // - Esc closes dropdown (then Tab proceeds normally to next field)
   const onStateKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       const anyResults = stateMatches.length > 0
@@ -222,6 +258,7 @@ export default function SearchForm({
       if (e.key === 'Escape') {
         if (stateOpen) {
           e.preventDefault()
+          e.stopPropagation()
           setStateOpen(false)
           setStateActiveIndex(-1)
         }
@@ -230,11 +267,15 @@ export default function SearchForm({
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
+        e.stopPropagation()
+
         if (!stateOpen) {
           setStateOpen(true)
           setStateActiveIndex(-1)
           return
         }
+
+        if (!anyResults) return
 
         setStateActiveIndex((prev) => {
           let next = prev
@@ -246,45 +287,31 @@ export default function SearchForm({
         return
       }
 
-      if (e.key === 'Enter') {
-        const raw = stateInput.trim()
-        if (!raw && stateActiveIndex < 0) {
-          e.preventDefault()
-          makeRef.current?.focus()
-          return
-        }
+      if (e.key === 'Tab' && stateOpen) {
+        e.preventDefault()
+        e.stopPropagation()
 
-        const upper = raw.toUpperCase()
-        const exactCode = STATES.find((s) => s.code === upper)
-        if (exactCode) {
-          e.preventDefault()
-          pickState(exactCode.code)
-          return
-        }
+        if (!anyResults) return
 
-        if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
-          e.preventDefault()
-          pickState(stateMatches[stateActiveIndex].code)
-          return
-        }
-
-        const best = stateMatches[0]
-        if (best) {
-          e.preventDefault()
-          pickState(best.code)
-        }
+        setStateActiveIndex((prev) => {
+          const start = prev < 0 ? (e.shiftKey ? maxIdx : 0) : prev
+          const next = e.shiftKey ? (start <= 0 ? maxIdx : start - 1) : start >= maxIdx ? 0 : start + 1
+          setTimeout(() => scrollActiveStateIntoView(next), 0)
+          return next
+        })
         return
       }
 
-      // IMPORTANT: Tab should just tab to the next input (don’t “tab into” options).
-      // If you want selection with keyboard: use Arrow keys + Enter.
-      if (e.key === 'Tab') {
-        setStateOpen(false)
-        setStateActiveIndex(-1)
+      if (e.key === 'Enter') {
+        const didSelect = selectBestStateFromInput()
+        if (didSelect) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
         return
       }
     },
-    [stateMatches, stateOpen, stateInput, stateActiveIndex, pickState, scrollActiveStateIntoView]
+    [stateMatches, stateOpen, scrollActiveStateIntoView, selectBestStateFromInput]
   )
 
   /* -------------------- close dropdown on outside click -------------------- */
@@ -323,10 +350,12 @@ export default function SearchForm({
         triggerHelper('That’s only the plate. Add state or car make, or include the first name (example: 7483-mike).')
         return false
       }
+
       if (q.endsWith('-')) {
         triggerHelper('Add at least one letter of the first name after the plate (example: 2222 t).')
         return false
       }
+
       return true
     }
 
@@ -363,14 +392,28 @@ export default function SearchForm({
     <>
       <style jsx>{`
         @keyframes rwshake {
-          0% { transform: translateX(0); }
-          20% { transform: translateX(-6px); }
-          40% { transform: translateX(6px); }
-          60% { transform: translateX(-4px); }
-          80% { transform: translateX(4px); }
-          100% { transform: translateX(0); }
+          0% {
+            transform: translateX(0);
+          }
+          20% {
+            transform: translateX(-6px);
+          }
+          40% {
+            transform: translateX(6px);
+          }
+          60% {
+            transform: translateX(-4px);
+          }
+          80% {
+            transform: translateX(4px);
+          }
+          100% {
+            transform: translateX(0);
+          }
         }
-        .rw-shake { animation: rwshake 0.35s ease-in-out; }
+        .rw-shake {
+          animation: rwshake 0.35s ease-in-out;
+        }
       `}</style>
 
       <form
@@ -382,13 +425,15 @@ export default function SearchForm({
           router.push(buildSearchUrl())
         }}
         onKeyDown={(e) => {
-          // prevent Enter from submitting while in inputs,
-          // but DO NOT block Enter on buttons (dropdown options use buttons)
+          // prevent Enter from submitting while navigating inputs,
+          // but DO NOT block Enter on the submit button
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
           if (!el) return
           if (el instanceof HTMLTextAreaElement) return
-          if (el instanceof HTMLButtonElement) return // <-- key fix
+          if (el instanceof HTMLButtonElement && el.getAttribute('type') === 'submit') return
+          // also allow Enter on dropdown option buttons
+          if (el instanceof HTMLButtonElement) return
           e.preventDefault()
         }}
       >
@@ -421,6 +466,7 @@ export default function SearchForm({
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {/* State */}
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -448,7 +494,7 @@ export default function SearchForm({
                     <button
                       key={s.code}
                       type="button"
-                      tabIndex={-1} // <-- IMPORTANT: keep Tab navigation on inputs, not dropdown items
+                      tabIndex={-1} // ✅ keep Tab on the input; we cycle in onStateKeyDown
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -472,8 +518,16 @@ export default function SearchForm({
                 </div>
               </div>
             )}
+
+            {stateOpen && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                Tip: <span className="font-semibold">Tab</span> cycles states • <span className="font-semibold">Enter</span> selects •{' '}
+                <span className="font-semibold">Esc</span> closes
+              </div>
+            )}
           </div>
 
+          {/* Car make */}
           <input
             ref={makeRef}
             value={carMake}

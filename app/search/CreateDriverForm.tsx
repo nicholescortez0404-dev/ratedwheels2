@@ -149,8 +149,8 @@ function displayNameFromHandle(normalizedHandle: string) {
  */
 function formatHandleDisplayInput(nextRaw: string) {
   let v = nextRaw.replace(/\s+/g, ' ')
-  v = v.replace(/^(\d{4})([A-Za-z])/, '$1 $2') // "2222Tommy" => "2222 Tommy"
-  v = v.replace(/^(\d{4})[-_]+/, '$1 ') // "2222-tommy" => "2222 tommy"
+  v = v.replace(/^(\d{4})([A-Za-z])/, '$1 $2')
+  v = v.replace(/^(\d{4})[-_]+/, '$1 ')
   return v
 }
 
@@ -280,7 +280,10 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   const [handleInput, setHandleInput] = useState(() => formatHandleDisplayInput(initialRaw))
   const handle = useMemo(() => normalizeToHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
-  const displayLabel = useMemo(() => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''), [handle, initialRaw])
+  const displayLabel = useMemo(
+    () => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''),
+    [handle, initialRaw]
+  )
 
   /* -------------------- fields -------------------- */
   const [carMake, setCarMake] = useState(initialCarMake ?? '')
@@ -334,8 +337,9 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     (e: React.KeyboardEvent) => {
       if (e.key !== 'Enter') return
       const target = e.target as Element | null
+      if (!target) return
       if (target instanceof HTMLTextAreaElement) return
-      // let Enter activate buttons normally
+      // allow Enter to activate buttons naturally
       if (target instanceof HTMLButtonElement) return
       e.preventDefault()
       e.stopPropagation()
@@ -434,6 +438,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   }, [])
 
   /* -------------------- state interactions -------------------- */
+
   const pickState = useCallback(
     (code: string) => {
       const up = code.toUpperCase().trim()
@@ -445,6 +450,8 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       setStateActiveIndex(-1)
 
       if (error) setError(null)
+
+      // after selection, move to next field
       setTimeout(() => carMakeRef.current?.focus(), 0)
     },
     [error]
@@ -466,6 +473,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     if (!raw) return false
 
     const upper = raw.toUpperCase()
+
     const exactCode = STATES.find((s) => s.code === upper)
     if (exactCode) {
       pickState(exactCode.code)
@@ -492,6 +500,10 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     return false
   }, [stateInput, stateActiveIndex, stateMatches, pickState])
 
+  // ✅ Your requested behavior:
+  // - Tab/Shift+Tab cycles highlighted states (ONLY when dropdown is open)
+  // - Enter selects highlighted/best match (Tab does NOT commit)
+  // - Escape closes dropdown (then Tab moves to next field normally)
   const onStateKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (loading) return
@@ -509,6 +521,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         return
       }
 
+      // Arrow navigation
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
@@ -518,6 +531,8 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
           setStateActiveIndex(-1)
           return
         }
+
+        if (!anyResults) return
 
         setStateActiveIndex((prev) => {
           let next = prev
@@ -529,7 +544,24 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         return
       }
 
-      // ✅ Enter selects from the input using activeIndex / best match.
+      // ✅ Tab cycles highlight when dropdown is open (does NOT select)
+      if (e.key === 'Tab' && stateOpen) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        if (!anyResults) return
+
+        setStateActiveIndex((prev) => {
+          // If nothing active, start at 0 (or end for Shift+Tab)
+          const start = prev < 0 ? (e.shiftKey ? maxIdx : 0) : prev
+          const next = e.shiftKey ? (start <= 0 ? maxIdx : start - 1) : (start >= maxIdx ? 0 : start + 1)
+          setTimeout(() => scrollActiveStateIntoView(next), 0)
+          return next
+        })
+        return
+      }
+
+      // Enter selects
       if (e.key === 'Enter') {
         const didSelect = selectBestStateFromInput()
         if (didSelect) {
@@ -538,15 +570,8 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         }
         return
       }
-
-      // ✅ Tab should NOT tab into list items. Close and let normal Tab proceed.
-      if (e.key === 'Tab') {
-        setStateOpen(false)
-        setStateActiveIndex(-1)
-        return
-      }
     },
-    [loading, stateMatches, stateOpen, selectBestStateFromInput, scrollActiveStateIntoView]
+    [loading, stateMatches, stateOpen, scrollActiveStateIntoView, selectBestStateFromInput]
   )
 
   /* -------------------- create driver -------------------- */
@@ -586,7 +611,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     throw new Error(insertErr.message)
   }
 
-  async function onCreateOnly() {
+  const onCreateOnly = useCallback(async () => {
     if (loading) return
     setLoading(true)
     setError(null)
@@ -601,54 +626,57 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     } finally {
       setLoading(false)
     }
-  }
+  }, [loading, router, handle]) // createDriver uses state in closure; ok here since user action triggers
 
-  async function onCreateAndReview(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    if (loading) return
+  const onCreateAndReview = useCallback(
+    async (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      if (loading) return
 
-    if (overLimit) {
-      setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-
-    const tagIds = Array.from(selectedTagIds)
-
-    try {
-      const row = await createDriver()
-      const nextHandle = row?.driver_handle ?? handle
-
-      const res = await fetch('/api/reviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driverId: row.id, stars, comment, tagIds }),
-      })
-
-      const jsonUnknown: unknown = await res.json().catch(() => ({}))
-      const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
-
-      if (!res.ok) {
-        const apiErr = typeof json.error === 'string' ? json.error : 'Driver created, but review failed to post.'
-        setError(apiErr)
-        setLoading(false)
+      if (overLimit) {
+        setError(`Please shorten your comment to ${MAX_COMMENT_CHARS} characters or less to submit.`)
         return
       }
 
-      const reviewObj = isJsonObject(json.review) ? json.review : null
-      const newReviewId = typeof reviewObj?.id === 'string' ? reviewObj.id : undefined
-      if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
+      setLoading(true)
+      setError(null)
 
-      router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
-      router.refresh()
-    } catch (err: unknown) {
-      setError(errorMessage(err, 'Failed to create driver and post review.'))
-    } finally {
-      setLoading(false)
-    }
-  }
+      const tagIds = Array.from(selectedTagIds)
+
+      try {
+        const row = await createDriver()
+        const nextHandle = row?.driver_handle ?? handle
+
+        const res = await fetch('/api/reviews', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ driverId: row.id, stars, comment, tagIds }),
+        })
+
+        const jsonUnknown: unknown = await res.json().catch(() => ({}))
+        const json: JsonObject = isJsonObject(jsonUnknown) ? jsonUnknown : {}
+
+        if (!res.ok) {
+          const apiErr = typeof json.error === 'string' ? json.error : 'Driver created, but review failed to post.'
+          setError(apiErr)
+          setLoading(false)
+          return
+        }
+
+        const reviewObj = isJsonObject(json.review) ? json.review : null
+        const newReviewId = typeof (reviewObj as any)?.id === 'string' ? ((reviewObj as any).id as string) : undefined
+        if (newReviewId) sessionStorage.setItem('rw:lastPostedReviewId', newReviewId)
+
+        router.push(`/search?q=${encodeURIComponent(nextHandle)}`)
+        router.refresh()
+      } catch (err: unknown) {
+        setError(errorMessage(err, 'Failed to create driver and post review.'))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [loading, overLimit, selectedTagIds, handle, stars, comment, router]
+  )
 
   /* -------------------- styles -------------------- */
 
@@ -669,12 +697,13 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       onSubmit={onCreateAndReview}
       className="space-y-4"
       onKeyDown={(e) => {
-        // prevent random Enter submits, but allow Enter on buttons (dropdown items, etc.)
+        // prevent random Enter submits; allow Enter in textarea + allow Enter on buttons
         if (e.key !== 'Enter') return
         const el = e.target as Element | null
         if (!el) return
         if (el instanceof HTMLTextAreaElement) return
         if (el instanceof HTMLButtonElement) return
+        // state input handles Enter itself; other inputs use onEnterToNext
         e.preventDefault()
       }}
     >
@@ -695,6 +724,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       )}
 
       <div className="space-y-3">
+        {/* handle */}
         <input
           ref={handleRef}
           value={handleInput}
@@ -714,6 +744,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         />
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {/* state (required) */}
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -742,7 +773,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                     <button
                       key={s.code}
                       type="button"
-                      tabIndex={-1} // ✅ don’t let Tab land on dropdown items
+                      tabIndex={-1} // ✅ Tab stays on input; we handle cycling in onStateKeyDown
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -768,8 +799,15 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
             )}
 
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
+            {stateOpen && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                Tip: <span className="font-semibold">Tab</span> cycles states • <span className="font-semibold">Enter</span> selects •{' '}
+                <span className="font-semibold">Esc</span> closes
+              </div>
+            )}
           </div>
 
+          {/* car make (optional) */}
           <input
             ref={carMakeRef}
             value={carMake}
@@ -784,6 +822,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         </div>
       </div>
 
+      {/* review fields */}
       <div className="space-y-4 pt-2">
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
@@ -837,6 +876,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                 loading ? 'opacity-60 cursor-not-allowed' : '',
               ].join(' ')}
             />
+
             <div className={['absolute bottom-2 right-3 text-xs tabular-nums', overLimit ? 'text-red-600' : 'text-gray-600'].join(' ')}>
               {comment.length}/{MAX_COMMENT_CHARS}
             </div>
