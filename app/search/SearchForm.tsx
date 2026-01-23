@@ -62,36 +62,19 @@ const STATES: { code: string; name: string }[] = [
 const HANDLE_RE = /^[a-z0-9]{1,4}-[a-z]{2,24}$/
 const PLATE_LEADING_RE = /^(\d{4})(?:-([a-z]{1,24}))?$/
 
-/**
- * Normalize ANY user-typed query into the canonical handle-ish string
- * used for matching + URLs (lowercase, spaces/underscores -> dash).
- *
- * IMPORTANT: UI shows "2222 tommy" but DB/search uses "2222-tommy".
- */
 function normalizeQueryToHandle(raw: string) {
   return raw
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9\s_-]/g, ' ') // strip weird punctuation
-    .replace(/[_\s]+/g, '-') // spaces/underscores -> dash
-    .replace(/-+/g, '-') // collapse repeated dashes
+    .replace(/[^a-z0-9\s_-]/g, ' ')
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
 }
 
-/**
- * Make the input feel natural:
- * - auto-insert a SPACE after 4 digits when user starts typing a name
- * - fix pasted "2222tommy" into "2222 tommy"
- * - show a space (not dash) after 4 digits
- */
 function formatQueryInputDisplay(nextRaw: string) {
   let v = nextRaw.replace(/\s+/g, ' ')
-
-  // "2222Tommy" => "2222 Tommy"
   v = v.replace(/^(\d{4})([A-Za-z])/, '$1 $2')
-
-  // "2222-tommy" / "2222_tommy" => "2222 tommy"
   v = v.replace(/^(\d{4})[-_]+/, '$1 ')
-
   return v
 }
 
@@ -130,7 +113,9 @@ function HighlightMatch({ text, q }: { text: string; q: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <span className="font-semibold underline underline-offset-2">{text.slice(idx, idx + query.length)}</span>
+      <span className="font-semibold underline underline-offset-2">
+        {text.slice(idx, idx + query.length)}
+      </span>
       {text.slice(idx + query.length)}
     </>
   )
@@ -159,7 +144,6 @@ export default function SearchForm({
   const [qInput, setQInput] = useState(() => formatQueryInputDisplay(initialQuery))
   const [carMake, setCarMake] = useState(initialCarMake)
 
-  /* -------------------- helper + shake -------------------- */
   const [helper, setHelper] = useState<string | null>(null)
   const [shakeKey, setShakeKey] = useState(0)
 
@@ -167,7 +151,7 @@ export default function SearchForm({
   const isExactHandle = useMemo(() => HANDLE_RE.test(normQ), [normQ])
   const plateParsed = useMemo(() => parsePlateLeading(normQ), [normQ])
 
-  /* -------------------- State dropdown -------------------- */
+  /* -------------------- state dropdown -------------------- */
   const [stateInput, setStateInput] = useState((initialState || '').toUpperCase())
   const [state, setState] = useState((initialState || '').toUpperCase())
   const [stateOpen, setStateOpen] = useState(false)
@@ -178,10 +162,7 @@ export default function SearchForm({
 
   const stateMatches = useMemo(() => bestStateMatches(stateInput, 60), [stateInput])
 
-  /* -------------------- disambiguators (live) -------------------- */
-  const hasDisambiguatorsLive = useMemo(() => {
-    return Boolean(state.trim() || carMake.trim())
-  }, [state, carMake])
+  const hasDisambiguatorsLive = useMemo(() => Boolean(state.trim() || carMake.trim()), [state, carMake])
 
   /* -------------------- mobile tap vs scroll guard -------------------- */
   const touchStartYRef = useRef(0)
@@ -203,122 +184,108 @@ export default function SearchForm({
     return e.pointerType === 'touch' && !touchMovedRef.current
   }, [])
 
-  function scrollActiveStateIntoView(nextIdx: number) {
+  const scrollActiveStateIntoView = useCallback((nextIdx: number) => {
     if (!stateListRef.current) return
     const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
     el?.scrollIntoView({ block: 'nearest' })
-  }
+  }, [])
 
-  const pickState = useCallback(
-    (code: string) => {
-      const up = code.toUpperCase().trim()
-      if (!STATES.some((s) => s.code === up)) return
+  const pickState = useCallback((code: string) => {
+    const up = code.toUpperCase().trim()
+    if (!STATES.some((s) => s.code === up)) return
 
-      setState(up)
-      setStateInput(up)
-      setStateOpen(false)
-      setStateActiveIndex(-1)
+    setState(up)
+    setStateInput(up)
+    setStateOpen(false)
+    setStateActiveIndex(-1)
 
-      // after selecting state, move on
-      setTimeout(() => makeRef.current?.focus(), 0)
-    },
-    [makeRef]
-  )
+    // move on
+    setTimeout(() => makeRef.current?.focus(), 0)
+  }, [])
 
-  function onStateChange(v: string) {
+  const onStateChange = useCallback((v: string) => {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
     setStateInput(cleaned)
     setStateOpen(true)
     setStateActiveIndex(-1)
 
     const maybeCode = cleaned.trim().slice(0, 2)
-    if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
-      setState(maybeCode)
-    } else {
-      setState('')
-    }
-  }
+    if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) setState(maybeCode)
+    else setState('')
+  }, [])
 
-  /**
-   * Key behavior:
-   * - Arrow keys: navigate
-   * - Enter: select (active option / exact code / best match)
-   * - Tab: if dropdown open (or text present), treat like select-best and move on
-   *        (prevents the "Tab then Enter doesn't work" confusion)
-   */
-  function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    const anyResults = stateMatches.length > 0
-    const maxIdx = anyResults ? stateMatches.length - 1 : -1
+  const onStateKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const anyResults = stateMatches.length > 0
+      const maxIdx = anyResults ? stateMatches.length - 1 : -1
 
-    if (e.key === 'Escape') {
-      if (stateOpen) {
+      if (e.key === 'Escape') {
+        if (stateOpen) {
+          e.preventDefault()
+          setStateOpen(false)
+          setStateActiveIndex(-1)
+        }
+        return
+      }
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
+        if (!stateOpen) {
+          setStateOpen(true)
+          setStateActiveIndex(-1)
+          return
+        }
+
+        setStateActiveIndex((prev) => {
+          let next = prev
+          if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : 0
+          else next = prev <= 0 ? maxIdx : prev - 1
+          setTimeout(() => scrollActiveStateIntoView(next), 0)
+          return next
+        })
+        return
+      }
+
+      if (e.key === 'Enter') {
+        const raw = stateInput.trim()
+        if (!raw && stateActiveIndex < 0) {
+          e.preventDefault()
+          makeRef.current?.focus()
+          return
+        }
+
+        const upper = raw.toUpperCase()
+        const exactCode = STATES.find((s) => s.code === upper)
+        if (exactCode) {
+          e.preventDefault()
+          pickState(exactCode.code)
+          return
+        }
+
+        if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
+          e.preventDefault()
+          pickState(stateMatches[stateActiveIndex].code)
+          return
+        }
+
+        const best = stateMatches[0]
+        if (best) {
+          e.preventDefault()
+          pickState(best.code)
+        }
+        return
+      }
+
+      // IMPORTANT: Tab should just tab to the next input (don’t “tab into” options).
+      // If you want selection with keyboard: use Arrow keys + Enter.
+      if (e.key === 'Tab') {
         setStateOpen(false)
         setStateActiveIndex(-1)
-      }
-      return
-    }
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      if (!stateOpen) {
-        setStateOpen(true)
-        setStateActiveIndex(-1)
         return
       }
-
-      setStateActiveIndex((prev) => {
-        let next = prev
-        if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : -1
-        else next = prev === -1 ? maxIdx : prev - 1
-        setTimeout(() => scrollActiveStateIntoView(next), 0)
-        return next
-      })
-      return
-    }
-
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      const raw = stateInput.trim()
-
-      // If Tab + empty input + dropdown closed, allow normal tabbing
-      if (e.key === 'Tab' && !raw && !stateOpen) return
-
-      // If empty and Enter, just go next
-      if (!raw) {
-        if (e.key === 'Tab') return
-        e.preventDefault()
-        makeRef.current?.focus()
-        return
-      }
-
-      const upper = raw.toUpperCase()
-
-      const exactCode = STATES.find((s) => s.code === upper)
-      if (exactCode) {
-        e.preventDefault()
-        pickState(exactCode.code)
-        return
-      }
-
-      // If there's an active highlighted item, pick it
-      if (stateActiveIndex >= 0 && stateMatches[stateActiveIndex]) {
-        e.preventDefault()
-        pickState(stateMatches[stateActiveIndex].code)
-        return
-      }
-
-      // Otherwise pick the best match (first)
-      const best = stateMatches[0]
-      if (best) {
-        e.preventDefault()
-        pickState(best.code)
-        return
-      }
-
-      // Nothing matched; let Tab behave normally
-      if (e.key === 'Tab') return
-    }
-  }
+    },
+    [stateMatches, stateOpen, stateInput, stateActiveIndex, pickState, scrollActiveStateIntoView]
+  )
 
   /* -------------------- close dropdown on outside click -------------------- */
   useEffect(() => {
@@ -329,7 +296,6 @@ export default function SearchForm({
         setStateActiveIndex(-1)
       }
     }
-
     document.addEventListener('pointerdown', onDocPointerDown)
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
   }, [])
@@ -357,12 +323,10 @@ export default function SearchForm({
         triggerHelper('That’s only the plate. Add state or car make, or include the first name (example: 7483-mike).')
         return false
       }
-
       if (q.endsWith('-')) {
         triggerHelper('Add at least one letter of the first name after the plate (example: 2222 t).')
         return false
       }
-
       return true
     }
 
@@ -372,9 +336,7 @@ export default function SearchForm({
 
   const buildSearchUrl = useCallback(() => {
     const params = new URLSearchParams()
-
-    const q = normQ
-    if (q) params.set('q', q)
+    if (normQ) params.set('q', normQ)
 
     const st = state.trim().toUpperCase()
     if (st) params.set('state', st)
@@ -395,37 +357,20 @@ export default function SearchForm({
   const dropdownScrollClass = 'max-h-56 overflow-auto overscroll-contain'
 
   const itemClass = (active: boolean) =>
-    [
-      'w-full text-left px-3 py-2 text-sm transition',
-      active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100',
-    ].join(' ')
+    ['w-full text-left px-3 py-2 text-sm transition', active ? 'bg-gray-100 text-gray-900' : 'text-gray-900 hover:bg-gray-100'].join(' ')
 
   return (
     <>
       <style jsx>{`
         @keyframes rwshake {
-          0% {
-            transform: translateX(0);
-          }
-          20% {
-            transform: translateX(-6px);
-          }
-          40% {
-            transform: translateX(6px);
-          }
-          60% {
-            transform: translateX(-4px);
-          }
-          80% {
-            transform: translateX(4px);
-          }
-          100% {
-            transform: translateX(0);
-          }
+          0% { transform: translateX(0); }
+          20% { transform: translateX(-6px); }
+          40% { transform: translateX(6px); }
+          60% { transform: translateX(-4px); }
+          80% { transform: translateX(4px); }
+          100% { transform: translateX(0); }
         }
-        .rw-shake {
-          animation: rwshake 0.35s ease-in-out;
-        }
+        .rw-shake { animation: rwshake 0.35s ease-in-out; }
       `}</style>
 
       <form
@@ -437,27 +382,25 @@ export default function SearchForm({
           router.push(buildSearchUrl())
         }}
         onKeyDown={(e) => {
-          // prevent "Enter" from submitting form while you’re navigating inputs
+          // prevent Enter from submitting while in inputs,
+          // but DO NOT block Enter on buttons (dropdown options use buttons)
           if (e.key !== 'Enter') return
           const el = e.target as Element | null
+          if (!el) return
           if (el instanceof HTMLTextAreaElement) return
-          if (el instanceof HTMLButtonElement && el.type === 'submit') return
+          if (el instanceof HTMLButtonElement) return // <-- key fix
           e.preventDefault()
         }}
       >
-        {/* Main handle input */}
         <div key={shakeKey} className={helper ? 'rw-shake' : ''}>
           <input
             ref={qRef}
             value={qInput}
             onChange={(e) => {
-              const next = formatQueryInputDisplay(e.target.value)
-              setQInput(next)
+              setQInput(formatQueryInputDisplay(e.target.value))
               if (helper) setHelper(null)
             }}
-            onBlur={() => {
-              setQInput((prev) => formatQueryInputDisplay(prev.trim()))
-            }}
+            onBlur={() => setQInput((prev) => formatQueryInputDisplay(prev.trim()))}
             onKeyDown={enterNext}
             placeholder="Last 4 of license plate + First name (ex: 8841 mike)"
             className="w-full rounded-md border border-gray-900 bg-[#242a33] px-4 py-3 text-white placeholder:text-white/70"
@@ -468,7 +411,6 @@ export default function SearchForm({
           />
         </div>
 
-        {/* Helper */}
         {helper && (
           <div className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-900">{helper}</div>
         )}
@@ -479,7 +421,6 @@ export default function SearchForm({
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {/* State */}
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -507,6 +448,7 @@ export default function SearchForm({
                     <button
                       key={s.code}
                       type="button"
+                      tabIndex={-1} // <-- IMPORTANT: keep Tab navigation on inputs, not dropdown items
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -532,7 +474,6 @@ export default function SearchForm({
             )}
           </div>
 
-          {/* Car make */}
           <input
             ref={makeRef}
             value={carMake}

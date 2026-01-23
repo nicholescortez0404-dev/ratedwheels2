@@ -276,49 +276,16 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   const commentRef = useRef<HTMLTextAreaElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
-  // Stable list for "Enter to next" behavior (NO custom hook; avoids React #310 risk)
-  const focusOrder = useMemo(
-    () => [handleRef, stateRef, carMakeRef, starsRef, commentRef, submitRef] as const,
-    []
-  )
-
-  const focusNext = useCallback((current: Element | null) => {
-    if (!current) return
-    const idx = focusOrder.findIndex((r) => r.current === current)
-    if (idx === -1) return
-
-    for (let i = idx + 1; i < focusOrder.length; i++) {
-      const el = focusOrder[i].current
-      if (el && !el.hasAttribute('disabled')) {
-        el.focus()
-        return
-      }
-    }
-  }, [focusOrder])
-
-  const onEnterToNext = useCallback((e: React.KeyboardEvent) => {
-    if (e.key !== 'Enter') return
-    const target = e.target as Element | null
-    if (target instanceof HTMLTextAreaElement) return
-    e.preventDefault()
-    e.stopPropagation()
-    focusNext(target)
-  }, [focusNext])
-
-  /* -------------------- handle (editable) -------------------- */
+  /* -------------------- handle -------------------- */
   const [handleInput, setHandleInput] = useState(() => formatHandleDisplayInput(initialRaw))
-
   const handle = useMemo(() => normalizeToHandle(handleInput), [handleInput])
   const handleValid = useMemo(() => HANDLE_RE.test(handle), [handle])
-  const displayLabel = useMemo(
-    () => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''),
-    [handle, initialRaw]
-  )
+  const displayLabel = useMemo(() => displayNameFromHandle(handle || normalizeToHandle(initialRaw) || ''), [handle, initialRaw])
 
   /* -------------------- fields -------------------- */
   const [carMake, setCarMake] = useState(initialCarMake ?? '')
 
-  /* -------------------- state typeahead (required) -------------------- */
+  /* -------------------- state dropdown (required) -------------------- */
   const initialStateCode = (initialState ?? '').toString().trim().toUpperCase()
   const initialStateIsValid = STATES.some((s) => s.code === initialStateCode)
 
@@ -343,8 +310,39 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const commentCount = comment.length
-  const overLimit = commentCount > MAX_COMMENT_CHARS
+  const overLimit = comment.length > MAX_COMMENT_CHARS
+
+  /* -------------------- enter-to-next (simple + safe) -------------------- */
+  const focusOrder = useMemo(() => [handleRef, stateRef, carMakeRef, starsRef, commentRef, submitRef] as const, [])
+  const focusNext = useCallback(
+    (current: Element | null) => {
+      if (!current) return
+      const idx = focusOrder.findIndex((r) => r.current === current)
+      if (idx === -1) return
+      for (let i = idx + 1; i < focusOrder.length; i++) {
+        const el = focusOrder[i].current
+        if (el && !el.hasAttribute('disabled')) {
+          el.focus()
+          return
+        }
+      }
+    },
+    [focusOrder]
+  )
+
+  const onEnterToNext = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key !== 'Enter') return
+      const target = e.target as Element | null
+      if (target instanceof HTMLTextAreaElement) return
+      // let Enter activate buttons normally
+      if (target instanceof HTMLButtonElement) return
+      e.preventDefault()
+      e.stopPropagation()
+      focusNext(target)
+    },
+    [focusNext]
+  )
 
   /* -------------------- mobile tap vs scroll guard -------------------- */
   const touchStartYRef = useRef(0)
@@ -362,15 +360,15 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     if (Math.abs(e.clientY - touchStartYRef.current) > 8) touchMovedRef.current = true
   }, [])
 
-  function isTouchTap(e: React.PointerEvent) {
+  const isTouchTap = useCallback((e: React.PointerEvent) => {
     return e.pointerType === 'touch' && !touchMovedRef.current
-  }
+  }, [])
 
-  function scrollActiveStateIntoView(nextIdx: number) {
+  const scrollActiveStateIntoView = useCallback((nextIdx: number) => {
     if (!stateListRef.current) return
     const el = stateListRef.current.querySelector<HTMLElement>(`[data-state-idx="${nextIdx}"]`)
     el?.scrollIntoView({ block: 'nearest' })
-  }
+  }, [])
 
   /* -------------------- outside click close -------------------- */
   useEffect(() => {
@@ -381,15 +379,13 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         setStateActiveIndex(-1)
       }
     }
-
     document.addEventListener('pointerdown', onDocPointerDown)
     return () => document.removeEventListener('pointerdown', onDocPointerDown)
   }, [])
 
-  /* -------------------- load tag options -------------------- */
+  /* -------------------- load tags -------------------- */
   useEffect(() => {
     let mounted = true
-
     ;(async () => {
       const { data, error: tagErr } = await supabase
         .from('tags')
@@ -404,22 +400,19 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       }
       setTags((data ?? []) as TagRow[])
     })()
-
     return () => {
       mounted = false
     }
   }, [])
 
-  /* -------------------- group + sort tags by priority -------------------- */
+  /* -------------------- group + sort tags -------------------- */
   const grouped = useMemo(() => {
     const byCat: Record<string, TagRow[]> = { negative: [], neutral: [], positive: [] }
-
     for (const t of tags) {
       const cat = String(t.category || '').trim().toLowerCase()
       if (!byCat[cat]) byCat[cat] = []
       byCat[cat].push(t)
     }
-
     for (const cat of Object.keys(byCat)) {
       byCat[cat].sort((a, b) => {
         const pa = TAG_PRIORITY[a.slug] ?? 999
@@ -428,7 +421,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         return a.label.localeCompare(b.label)
       })
     }
-
     return byCat
   }, [tags])
 
@@ -442,12 +434,10 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
   }, [])
 
   /* -------------------- state interactions -------------------- */
-
   const pickState = useCallback(
     (code: string) => {
       const up = code.toUpperCase().trim()
-      const match = STATES.find((s) => s.code === up)
-      if (!match) return
+      if (!STATES.some((s) => s.code === up)) return
 
       setState(up)
       setStateInput(up)
@@ -455,35 +445,27 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       setStateActiveIndex(-1)
 
       if (error) setError(null)
-
-      // move to next field (car make) after selection
-      setTimeout(() => {
-        carMakeRef.current?.focus()
-      }, 0)
+      setTimeout(() => carMakeRef.current?.focus(), 0)
     },
     [error]
   )
 
-  function onStateChange(v: string) {
+  const onStateChange = useCallback((v: string) => {
     const cleaned = v.toUpperCase().replace(/[^A-Z ]/g, '')
     setStateInput(cleaned)
     setStateOpen(true)
     setStateActiveIndex(-1)
 
     const maybeCode = cleaned.trim().slice(0, 2)
-    if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) {
-      setState(maybeCode)
-    } else {
-      setState('')
-    }
-  }
+    if (STATES.some((s) => s.code === maybeCode) && cleaned.trim().length <= 2) setState(maybeCode)
+    else setState('')
+  }, [])
 
-  function selectBestStateFromInput() {
+  const selectBestStateFromInput = useCallback(() => {
     const raw = stateInput.trim()
     if (!raw) return false
 
     const upper = raw.toUpperCase()
-
     const exactCode = STATES.find((s) => s.code === upper)
     if (exactCode) {
       pickState(exactCode.code)
@@ -508,55 +490,64 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
     }
 
     return false
-  }
+  }, [stateInput, stateActiveIndex, stateMatches, pickState])
 
-  function onStateKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (loading) return
+  const onStateKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (loading) return
 
-    const anyResults = stateMatches.length > 0
-    const maxIdx = anyResults ? stateMatches.length - 1 : -1
+      const anyResults = stateMatches.length > 0
+      const maxIdx = anyResults ? stateMatches.length - 1 : -1
 
-    if (e.key === 'Escape') {
-      if (stateOpen) {
-        e.preventDefault()
-        e.stopPropagation()
-        setStateOpen(false)
-        setStateActiveIndex(-1)
-      }
-      return
-    }
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      e.stopPropagation()
-
-      if (!stateOpen) {
-        setStateOpen(true)
-        setStateActiveIndex(-1)
+      if (e.key === 'Escape') {
+        if (stateOpen) {
+          e.preventDefault()
+          e.stopPropagation()
+          setStateOpen(false)
+          setStateActiveIndex(-1)
+        }
         return
       }
 
-      setStateActiveIndex((prev) => {
-        let next = prev
-        if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : -1
-        else next = prev === -1 ? maxIdx : prev - 1
-        setTimeout(() => scrollActiveStateIntoView(next), 0)
-        return next
-      })
-      return
-    }
-
-    // ✅ Key fix: when dropdown is open, Tab should behave like "select" then move on.
-    // This prevents the "Tab then Enter stops selecting" issue.
-    if (e.key === 'Enter' || (e.key === 'Tab' && stateOpen)) {
-      const didSelect = selectBestStateFromInput()
-      if (didSelect) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
+
+        if (!stateOpen) {
+          setStateOpen(true)
+          setStateActiveIndex(-1)
+          return
+        }
+
+        setStateActiveIndex((prev) => {
+          let next = prev
+          if (e.key === 'ArrowDown') next = prev < maxIdx ? prev + 1 : 0
+          else next = prev <= 0 ? maxIdx : prev - 1
+          setTimeout(() => scrollActiveStateIntoView(next), 0)
+          return next
+        })
+        return
       }
-      return
-    }
-  }
+
+      // ✅ Enter selects from the input using activeIndex / best match.
+      if (e.key === 'Enter') {
+        const didSelect = selectBestStateFromInput()
+        if (didSelect) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+        return
+      }
+
+      // ✅ Tab should NOT tab into list items. Close and let normal Tab proceed.
+      if (e.key === 'Tab') {
+        setStateOpen(false)
+        setStateActiveIndex(-1)
+        return
+      }
+    },
+    [loading, stateMatches, stateOpen, selectBestStateFromInput, scrollActiveStateIntoView]
+  )
 
   /* -------------------- create driver -------------------- */
 
@@ -678,12 +669,12 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       onSubmit={onCreateAndReview}
       className="space-y-4"
       onKeyDown={(e) => {
-        // Keep your "Enter shouldn't submit randomly" behavior,
-        // but we stopPropagation inside specific inputs when needed.
+        // prevent random Enter submits, but allow Enter on buttons (dropdown items, etc.)
         if (e.key !== 'Enter') return
         const el = e.target as Element | null
+        if (!el) return
         if (el instanceof HTMLTextAreaElement) return
-        if (el instanceof HTMLButtonElement && el.type === 'submit') return
+        if (el instanceof HTMLButtonElement) return
         e.preventDefault()
       }}
     >
@@ -704,7 +695,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
       )}
 
       <div className="space-y-3">
-        {/* handle */}
         <input
           ref={handleRef}
           value={handleInput}
@@ -723,8 +713,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
           spellCheck={false}
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* state (required) */}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div ref={stateBoxRef} className="relative">
             <input
               ref={stateRef}
@@ -753,6 +742,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                     <button
                       key={s.code}
                       type="button"
+                      tabIndex={-1} // ✅ don’t let Tab land on dropdown items
                       data-state-idx={idx}
                       onMouseEnter={() => setStateActiveIndex(idx)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -780,7 +770,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
             {!statePicked && <div className="mt-1 text-xs text-gray-600">State is required</div>}
           </div>
 
-          {/* car make (optional) */}
           <input
             ref={carMakeRef}
             value={carMake}
@@ -795,7 +784,6 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
         </div>
       </div>
 
-      {/* review fields */}
       <div className="space-y-4 pt-2">
         <div className="flex items-center gap-3">
           <label className="text-gray-900 font-medium">Rating</label>
@@ -810,6 +798,7 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                 commentRef.current?.focus()
                 return
               }
+              onEnterToNext(e)
             }}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-black/20"
             disabled={loading}
@@ -848,9 +837,8 @@ export default function CreateDriverForm({ initialRaw, initialState, initialCarM
                 loading ? 'opacity-60 cursor-not-allowed' : '',
               ].join(' ')}
             />
-
             <div className={['absolute bottom-2 right-3 text-xs tabular-nums', overLimit ? 'text-red-600' : 'text-gray-600'].join(' ')}>
-              {commentCount}/{MAX_COMMENT_CHARS}
+              {comment.length}/{MAX_COMMENT_CHARS}
             </div>
           </div>
 
