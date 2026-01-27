@@ -1,12 +1,16 @@
 // app/privacy/privacy-policy/page.tsx
-import { TERMly_RAW_HTML } from './termlyRaw'
+import { TERMLY_RAW_HTML } from './termlyRaw'
 
 const COMPANY_NAME = 'RatedWheels'
 const CONTACT_EMAIL = 'support@ratedwheels.app'
 
 // Uses today's date automatically (server-rendered)
 function formatLongDate(d: Date) {
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  return d.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
 }
 
 function escapeHtml(s: string) {
@@ -47,11 +51,11 @@ function applyTermlyAutofill(raw: string) {
 }
 
 export default function PrivacyPolicyPage() {
-  const html = applyTermlyAutofill(TERMly_RAW_HTML)
+  const html = applyTermlyAutofill(TERMLY_RAW_HTML)
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <h1 className="text-3xl font-semibold mb-6">Privacy Policy</h1>
+      <h1 className="mb-6 text-3xl font-semibold">Privacy Policy</h1>
 
       {/* Termly injects its own styling; keep wrapper minimal to avoid CSS fights */}
       <div dangerouslySetInnerHTML={{ __html: html }} />
